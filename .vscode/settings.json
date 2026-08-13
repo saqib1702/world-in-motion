@@ -1,0 +1,16 @@
+{
+  "python.analysis.exclude": [
+    "**/.venv/**",
+    "**/_pyrefly_virtual_/**",
+    "**/*.md",
+    "**/*.markdown",
+    "**/*.txt"
+  ],
+  "files.exclude": {
+    "**/_pyrefly_virtual_/**": true
+  },
+  "search.exclude": {
+    "**/.venv/**": true,
+    "**/_pyrefly_virtual_/**": true
+  }
+}

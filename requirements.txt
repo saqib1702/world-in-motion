@@ -1,0 +1,21 @@
+# --- Web layer ---
+Flask>=3.0,<4.0
+flask-socketio>=5.3,<6.0
+
+# --- Database (MongoDB Atlas) ---
+pymongo>=4.8,<5.0
+certifi>=2024.7.4          # CA bundle for Atlas TLS (avoids SSL failures on Windows/macOS)
+mongomock>=4.3             # in-memory Mongo fallback used when MONGO_URI is unset (tests/local)
+
+# --- LLM (agent reasoning) ---
+google-genai>=1.0          # current unified Gemini SDK: `from google import genai`
+
+# --- Ingestion ---
+requests>=2.32
+APScheduler>=3.10,<4.0
+
+# --- Config ---
+python-dotenv>=1.0
+
+# --- Production WSGI server (AWS deploy) ---
+gunicorn>=22.0
