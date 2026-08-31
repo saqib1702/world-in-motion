@@ -31,7 +31,11 @@ function normalise(pathname) {
 
 function currentPath() {
   if (typeof window === "undefined") return "/";
-  return normalise(window.location.pathname);
+  // Always reset to starting page ("/") on page load or refresh
+  if (window.location.pathname !== "/") {
+    window.history.replaceState({}, "", "/");
+  }
+  return "/";
 }
 
 export function RouterProvider({ children }) {

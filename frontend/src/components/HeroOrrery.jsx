@@ -161,11 +161,10 @@ function Hub({ segments }) {
 
 /** Suspended brass dust. The warm-room equivalent of the live board's starfield. */
 function Motes({ count }) {
+  const pointsRef = useRef();
   const geometry = useMemo(() => {
     const positions = new Float32Array(count * 3);
     for (let i = 0; i < count; i += 1) {
-      // Rejection-free spherical shell: motes fill the volume the mechanism
-      // occupies plus a margin, so they parallax against it from every angle.
       const r = 4 + Math.random() * 7;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
@@ -180,8 +179,14 @@ function Motes({ count }) {
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 
+  useFrame((state) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.y = state.clock.elapsedTime * 0.02;
+    }
+  });
+
   return (
-    <points geometry={geometry}>
+    <points ref={pointsRef} geometry={geometry}>
       <pointsMaterial
         size={0.04}
         color={BRASS_DEEP}
@@ -205,9 +210,6 @@ function Orrery({ quality, animate }) {
   const ringSegments = quality === "high" ? 128 : 64;
   const ticks = quality === "high" ? 48 : 24;
 
-  // Bodies are positioned declaratively at t=0 as well as imperatively per
-  // frame, so the very first paint — and the static reduced-motion render — has
-  // them spread around their orbits instead of stacked on one axis.
   const initialPositions = useMemo(
     () =>
       BODIES.map((body) => {
@@ -255,11 +257,13 @@ function Orrery({ quality, animate }) {
         const mesh = bodyRefs.current[i];
         if (!mesh) continue;
         const angle = body.phase + t * ring.speed;
+        const bob = Math.sin(t * 1.6 + body.phase) * 0.16;
         mesh.position.set(
           Math.cos(angle) * ring.radius,
-          0,
+          bob,
           Math.sin(angle) * ring.radius
         );
+        mesh.rotation.y = t * 0.6;
       }
     }
 

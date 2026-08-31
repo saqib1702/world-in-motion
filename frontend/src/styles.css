@@ -37,8 +37,8 @@
   --verdigris-ink: #2c5a4e;
 
   /* --- Type ------------------------------------------------------------- */
-  --font-display: "Outfit", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-body: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", ui-monospace, monospace;
 
   --step--1: clamp(0.76rem, 0.74rem + 0.1vw, 0.82rem);

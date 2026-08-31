@@ -84,8 +84,9 @@ function Ring({ radius, tilt, speed, color, ticks, segments, animate }) {
 
   useFrame((state) => {
     if (!animate || !groupRef.current) return;
-    // Written straight onto the object every frame. Nothing here is React state.
-    groupRef.current.rotation.y = state.clock.elapsedTime * speed;
+    const t = state.clock.elapsedTime;
+    groupRef.current.rotation.y = t * speed;
+    groupRef.current.rotation.x = Math.sin(t * 0.2 + radius) * 0.08;
   });
 
   return (
