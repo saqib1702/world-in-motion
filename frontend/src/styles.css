@@ -37,13 +37,9 @@
   --verdigris-ink: #2c5a4e;
 
   /* --- Type ------------------------------------------------------------- */
-  /* Fraunces is used sparingly and only large, where its optical-size and
-     WONK axes read as a hand-cut engraving rather than a webfont. */
-  --font-display: "Fraunces", "Hoefler Text", Georgia, "Times New Roman", serif;
-  --font-body: "Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  /* Every number in this app is a measurement, so figures are monospaced and
-     tabular — a relation score that shifts width as it changes is unreadable. */
-  --font-mono: "IBM Plex Mono", "Cascadia Mono", ui-monospace, Consolas, monospace;
+  --font-display: "Outfit", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-body: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono", ui-monospace, monospace;
 
   --step--1: clamp(0.76rem, 0.74rem + 0.1vw, 0.82rem);
   --step-0: clamp(0.95rem, 0.92rem + 0.15vw, 1.02rem);
