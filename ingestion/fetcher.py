@@ -64,10 +64,6 @@ def normalize(
     }
 
 
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[a-zA-Z][a-zA-Z\-]{2,}", text.lower())
-
-
 def _parse_gdelt_datetime(value: str) -> Optional[datetime]:
     # Typical value: 20260813T101500Z
     try:
@@ -100,44 +96,116 @@ def _coerce_datetime(value: Any) -> Optional[datetime]:
     return None
 
 
-def _nation_keyword_profiles() -> dict[str, set[str]]:
-    profiles: dict[str, set[str]] = {}
+# ---------------------------------------------------------------------------
+# Entity matching
+# ---------------------------------------------------------------------------
+# Because the roster is real states and blocs, an article can be tied to an
+# actor by *naming* it — "Beijing", "the White House", "Brussels" — rather than
+# by scoring it against a nation's declared interests. That distinction matters:
+# interest scoring guesses which nation a story is "about", whereas an entity
+# match is a fact about the text. Only genuinely named actors get to react.
+
+#: Short forms are matched case-sensitively against the original text, because
+#: lowercasing turns "US" into the pronoun "us" and "EU" into a fragment of
+#: dozens of ordinary words. Anything with three or fewer alphanumerics is
+#: treated this way and matched in uppercase.
+_SHORT_ALIAS_MAX_LEN = 3
+
+#: An article must contain at least one of these to count as geopolitical. The
+#: upstream feed queries already bias toward these topics; this is the backstop
+#: that keeps "US actress wins award" from moving a relation score.
+_GEOPOLITICAL_TERMS: frozenset[str] = frozenset({
+    "trade", "tariff", "tariffs", "sanction", "sanctions", "embargo",
+    "export", "import", "supply chain", "semiconductor", "chip", "chips",
+    "military", "defense", "defence", "troops", "missile", "warship", "navy",
+    "nuclear", "weapons", "arms", "strike", "war", "ceasefire", "conflict",
+    "diplomatic", "diplomacy", "summit", "treaty", "accord", "alliance",
+    "ambassador", "foreign minister", "foreign ministry", "talks",
+    "energy", "oil", "gas", "pipeline", "opec", "crude",
+    "cyber", "cyberattack", "espionage", "intelligence",
+    "climate", "emissions", "carbon",
+    "currency", "central bank", "interest rate", "inflation", "imf",
+    "border", "territorial", "sovereignty", "airspace", "strait",
+    "nato", "united nations", "security council", "brics", "g7", "g20",
+    "visa", "immigration", "election", "protest", "coup",
+})
+
+
+def _alias_pattern(alias: str) -> tuple[re.Pattern[str], bool]:
+    """Compile one alias into (pattern, case_sensitive).
+
+    Uses explicit `(?<!\\w)` / `(?!\\w)` lookarounds rather than `\\b` so aliases
+    that end in punctuation ("u.s.") still anchor correctly.
+    """
+    alphanumeric = re.sub(r"[^a-z0-9]", "", alias.lower())
+    case_sensitive = len(alphanumeric) <= _SHORT_ALIAS_MAX_LEN
+
+    needle = alias.upper() if case_sensitive else alias.lower()
+    pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)")
+    return pattern, case_sensitive
+
+
+def _build_entity_index() -> dict[str, list[tuple[re.Pattern[str], bool]]]:
+    """agent_id -> compiled alias matchers, derived from the seeded personas."""
+    index: dict[str, list[tuple[re.Pattern[str], bool]]] = {}
     for nation in STARTER_NATIONS:
         agent_id = nation["agent_id"]
         persona = nation.get("persona", {})
-        text_parts = [nation.get("name", "")]
-        text_parts.extend(persona.get("core_interests", []))
-        text_parts.extend(persona.get("allies", []))
-        text_parts.extend(persona.get("rivals", []))
 
-        tokens = set(_tokenize(" ".join(text_parts)))
-        tokens.update(
-            {
-                "trade",
-                "sanctions",
-                "tariff",
-                "military",
-                "diplomatic",
-                "alliance",
-                "energy",
-                "cyber",
-                "shipping",
-                "sovereignty",
-            }
-        )
-        profiles[agent_id] = tokens
-
-    # Add targeted signal terms to increase precision per nation persona.
-    profiles["nation_solaria"].update({"ai", "artificial", "quantum", "semiconductor", "chip", "ip"})
-    profiles["nation_verdant"].update({"climate", "carbon", "biodiversity", "agriculture", "treaty"})
-    profiles["nation_ironreach"].update({"defense", "border", "missile", "mineral", "metals"})
-    profiles["nation_valerius"].update({"fossil", "nuclear", "drilling", "protectionism"})
-    profiles["nation_aethelgard"].update({"banking", "finance", "logistics", "arbitration", "rare", "earth"})
-    profiles["nation_eldoria"].update({"maritime", "renewable", "democracy", "press", "diplomacy"})
-    return profiles
+        # The display name is always an alias, even if not listed explicitly.
+        aliases = {nation.get("name", "")} | set(persona.get("aliases", []))
+        matchers = [_alias_pattern(a) for a in aliases if a and a.strip()]
+        index[agent_id] = matchers
+    return index
 
 
-NATION_KEYWORDS = _nation_keyword_profiles()
+NATION_ENTITIES = _build_entity_index()
+
+
+def _is_geopolitical(text_lower: str) -> bool:
+    return any(term in text_lower for term in _GEOPOLITICAL_TERMS)
+
+
+def _event_text(event_doc: dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(event_doc.get("title", "")),
+            str(event_doc.get("body", "")),
+            str(event_doc.get("url", "")),
+            str(event_doc.get("raw", {}).get("domain", "")),
+        ]
+    )
+
+
+def _matched_actors(text: str) -> list[tuple[str, int]]:
+    """Actors explicitly named in `text`, as (agent_id, distinct alias hits)."""
+    text_lower = text.lower()
+    matches: list[tuple[str, int]] = []
+
+    for agent_id, matchers in NATION_ENTITIES.items():
+        hits = 0
+        for pattern, case_sensitive in matchers:
+            haystack = text if case_sensitive else text_lower
+            if pattern.search(haystack):
+                hits += 1
+        if hits:
+            matches.append((agent_id, hits))
+
+    matches.sort(key=lambda item: item[1], reverse=True)
+    return matches
+
+
+def _relevant_agents(event_doc: dict[str, Any], min_actors: int = 1) -> list[str]:
+    """Which seeded actors this article actually concerns, best match first."""
+    text = _event_text(event_doc)
+    if not _is_geopolitical(text.lower()):
+        return []
+
+    matches = _matched_actors(text)
+    if len(matches) < min_actors:
+        return []
+    return [agent_id for agent_id, _ in matches]
+
 
 
 class GDELTEventSource(EventSource):
@@ -264,34 +332,6 @@ class GoogleNewsRSSSource(EventSource):
         return out
 
 
-def _score_event_against_nation(text: str, nation_keywords: set[str]) -> int:
-    score = 0
-    for keyword in nation_keywords:
-        if keyword in text:
-            score += 1
-    return score
-
-
-def _relevant_agents(event_doc: dict[str, Any], min_score: int = 2) -> list[str]:
-    text = " ".join(
-        [
-            str(event_doc.get("title", "")),
-            str(event_doc.get("body", "")),
-            str(event_doc.get("url", "")),
-            str(event_doc.get("raw", {}).get("domain", "")),
-        ]
-    ).lower()
-
-    matches: list[tuple[str, int]] = []
-    for agent_id, keywords in NATION_KEYWORDS.items():
-        s = _score_event_against_nation(text, keywords)
-        if s >= min_score:
-            matches.append((agent_id, s))
-
-    matches.sort(key=lambda item: item[1], reverse=True)
-    return [agent_id for agent_id, _ in matches]
-
-
 def _to_engine_event(event_doc: dict[str, Any], involved_agents: list[str]) -> dict[str, Any]:
     published_at = _coerce_datetime(event_doc.get("published_at")) or datetime.now(timezone.utc)
     source = str(event_doc.get("source", "external_news"))
@@ -304,6 +344,11 @@ def _to_engine_event(event_doc: dict[str, Any], involved_agents: list[str]) -> d
         "description": body,
         "event_type": "current_event",
         "source": source,
+        # Promoted to the top level (as well as kept in payload) because the
+        # engine dedupes on (source, external_id) before spending a Gemini call
+        # per agent — without it, every scheduler cycle re-reacts to the same
+        # article. See helpers.log_event_once.
+        "external_id": external_id,
         "involved_agents": involved_agents,
         "payload": {
             "external_id": external_id,
@@ -342,7 +387,11 @@ def fetch_relevant_current_events(
     if not raw_events:
         return []
 
-    engine_events: list[dict[str, Any]] = []
+    # Rank before truncating. A story naming two or more actors ("EU opens
+    # tariff probe into Chinese EVs") produces a directed relation shift, while a
+    # single-actor story mostly produces domestic commentary — so multi-actor
+    # items earn their slot in the limited per-tick budget first.
+    scored: list[tuple[int, dict[str, Any], list[str]]] = []
     seen_external_ids: set[str] = set()
 
     for doc in raw_events:
@@ -355,10 +404,18 @@ def fetch_relevant_current_events(
             continue
 
         seen_external_ids.add(external_id)
-        engine_events.append(_to_engine_event(doc, agents))
+        scored.append((len(agents), doc, agents))
 
-        if len(engine_events) >= limit:
-            break
+    scored.sort(key=lambda item: item[0], reverse=True)
 
-    log.info("Fetched %d relevant current events (from %d raw)", len(engine_events), len(raw_events))
+    engine_events = [
+        _to_engine_event(doc, agents) for _count, doc, agents in scored[:limit]
+    ]
+
+    log.info(
+        "Fetched %d relevant current events (from %d raw, %d matched actors)",
+        len(engine_events),
+        len(raw_events),
+        len(scored),
+    )
     return engine_events

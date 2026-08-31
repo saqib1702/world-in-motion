@@ -1,4 +1,10 @@
+# --- Secrets ---
+# Never commit real credentials. See .env.example for the template.
 .env
+.env.local
+.env.*.local
+
+# --- Python ---
 .venv/
 venv/
 __pycache__/
@@ -7,5 +13,22 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# --- Node / frontend ---
+# node_modules was previously committed (~3.4k files). Besides the size, the
+# installed @rollup/* and @esbuild/* packages are platform-specific native
+# binaries, so a Windows-installed tree cannot build on Linux or macOS and
+# `npm ci` on another machine fails in confusing ways. Lockfile only.
+node_modules/
+frontend/dist/
+dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Editor / OS ---
 .DS_Store
+Thumbs.db
 *.log

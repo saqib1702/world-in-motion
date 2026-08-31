@@ -2,8 +2,53 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>World in Motion</title>
+    <!-- viewport-fit=cover so the layout can extend under a notch; the safe-area
+         insets are then reclaimed in CSS. maximum-scale is deliberately not set,
+         because locking zoom breaks accessibility. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Matches --sand in styles.css, so the browser chrome on a phone continues
+         the page instead of framing it in a strip of the wrong colour. -->
+    <meta name="theme-color" content="#e2d0b0" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="World in Motion — a live multi-agent geopolitical simulation. Language-model nation agents reason over real headlines and their relations render as a 3D force-directed graph. Simulated projections, not real policy."
+    />
+    <title>World in Motion — Multi-Agent Geopolitical Simulation</title>
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="World in Motion" />
+    <meta
+      property="og:description"
+      content="Ten nation agents read the news, reason in character, and move a 3D relation graph. Simulated projections, not real policy."
+    />
+
+    <!--
+      Fonts are linked here rather than @import-ed from styles.css: an @import
+      serialises the download chain (HTML -> CSS -> font), so first paint waits
+      on a third-party request. preconnect opens the socket and the TLS session
+      while the HTML is still parsing.
+
+      This used to use the media="print" onload="this.media='all'" trick to make
+      the stylesheet non-blocking. It has been removed on purpose. That onload is
+      an inline event handler, and the production CSP set in api/__init__.py is
+      script-src 'self' with no unsafe-inline — so in development Vite serves the
+      page with no CSP and it worked, while in production the handler was blocked
+      and the stylesheet stayed media="print" forever. The fonts silently never
+      applied anywhere except localhost. A plain blocking link is a couple of
+      hundred milliseconds on a cold cache and always correct; display=swap still
+      keeps text visible in the fallback stack while the files arrive.
+
+      Axes are requested explicitly. Google serves a variable font pinned at the
+      default for any axis you did not ask for, so requesting only wght would
+      make the SOFT/WONK settings in styles.css do nothing.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..800,0..100,0..1&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400..700&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>

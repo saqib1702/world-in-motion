@@ -1,8 +1,10 @@
 """The world tick and simulation engine.
 
 Drives the simulation loop:
-1. Pulls latest events (from ingestion, DB, or manual triggers).
-2. Runs perception and Gemini decision-making for each nation agent in parallel.
+1. Pulls latest events (from ingestion, DB, or manual triggers), skipping any
+   already ingested on a previous cycle.
+2. Records perception for each nation agent, then decides for every agent in a
+   single batched Gemini call (see engine/deliberation.py).
 3. Applies relation deltas to the `relations` collection in MongoDB.
 4. Logs full turn to `ticks` and `events`.
 5. Returns a structured summary of what changed during the tick.
@@ -12,7 +14,6 @@ Can be run as a single manual tick or as a continuous loop on an interval.
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -21,30 +22,39 @@ from agents.base import Observation
 from agents.nation import NationAgent
 from db import helpers, schema
 from db.mongo import get_db
+from engine import deliberation
 
 log = logging.getLogger(__name__)
 
 
-def _process_single_agent(agent: NationAgent, obs: Observation) -> dict[str, Any]:
-    """Helper executed in worker thread: run perceive and decide for one agent."""
+def _commit_agent_decision(
+    agent: NationAgent, decision: dict[str, Any]
+) -> dict[str, Any]:
+    """Commit one already-made decision, isolating per-agent failures.
+
+    The decision itself comes from the batched Gemini call (see
+    engine/deliberation.py); this only persists it. `apply_decision` is the
+    same commit path the per-agent mode used, so relation writes,
+    agent_id canonicalisation, memory, and the actions log are identical
+    regardless of how the decision was produced.
+    """
     try:
-        agent.perceive(obs)
-        decision = agent.decide()
+        committed = agent.apply_decision(decision)
         return {
             "agent_id": agent.agent_id,
             "agent_name": agent.name,
-            "decision": decision,
+            "decision": committed,
             "status": "success",
         }
     except Exception as exc:
-        log.error("Error processing agent [%s] in tick: %s", agent.name, exc, exc_info=True)
+        log.error("Error committing decision for [%s]: %s", agent.name, exc, exc_info=True)
         return {
             "agent_id": agent.agent_id,
             "agent_name": agent.name,
             "decision": {
                 "action_type": "ignore",
                 "target_country": "None",
-                "reasoning": f"Execution error: {exc}",
+                "reasoning": f"Commit error: {exc}",
                 "relation_delta": 0.0,
             },
             "status": "error",
@@ -59,6 +69,10 @@ class WorldEngine:
     run_id: str = "default_run"
     tick: int = 0
     agents: list[NationAgent] = field(default_factory=list)
+    #: Retained for API compatibility with existing callers. Decisions are no
+    #: longer fanned out across threads — one batched Gemini call covers every
+    #: actor, so there is nothing to parallelise and the rate limiter no longer
+    #: serialises ten competing requests.
     max_workers: int = 6
 
     def __post_init__(self):
@@ -97,25 +111,56 @@ class WorldEngine:
 
         # 1. Process & log new events
         events_for_tick: list[dict[str, Any]] = []
+        duplicate_events: list[str] = []
         if custom_events:
             for evt in custom_events:
                 headline = evt.get("headline", evt.get("title", "World Event"))
                 desc = evt.get("description", evt.get("body", ""))
                 involved = evt.get("involved_agents", [a.agent_id for a in self.agents])
-                evt_id = helpers.log_event(
+                # Identity assigned by the upstream source (sha1 of the article
+                # URL for GDELT / Google News). Ingested events carry it inside
+                # `payload`; fabricated demo events have none and so always fire.
+                external_id = evt.get("external_id") or (evt.get("payload") or {}).get("external_id")
+                evt_id, created = helpers.log_event_once(
                     headline=headline,
                     description=desc,
                     event_type=evt.get("event_type", "manual_trigger"),
                     source=evt.get("source", "manual"),
                     involved_agents=involved,
                     payload=evt,
+                    external_id=external_id,
                 )
+                if not created:
+                    # Already ingested on an earlier cycle. Reacting again would
+                    # duplicate the relation shifts and spend one Gemini call per
+                    # agent on news the world has already responded to.
+                    duplicate_events.append(headline)
+                    continue
                 events_for_tick.append({
                     "event_id": evt_id,
                     "headline": headline,
                     "description": desc,
                     "involved_agents": involved,
                 })
+
+            if not events_for_tick:
+                log.info(
+                    "Tick %d: all %d incoming events were already ingested. "
+                    "Skipping agent reasoning.",
+                    self.tick,
+                    len(duplicate_events),
+                )
+                return {
+                    "run_id": self.run_id,
+                    "tick": self.tick,
+                    "timestamp": now_iso,
+                    "events_processed": [],
+                    "duplicate_events": duplicate_events,
+                    "actions_taken": [],
+                    "relation_shifts": [],
+                    "skipped": True,
+                    "skip_reason": "all_events_already_ingested",
+                }
         else:
             recent_db_events = helpers.get_recent_events(limit=3)
             events_for_tick = recent_db_events or [{"headline": f"Tick {self.tick} Geopolitical Standstill", "description": "No major news event."}]
@@ -127,18 +172,37 @@ class WorldEngine:
             events=events_for_tick,
         )
 
-        # 3. Parallel perception & Gemini decision across all agents
-        log.info("Dispatching decision calls across %d agents (max_workers=%d)...", len(self.agents), self.max_workers)
-        agent_results: list[dict[str, Any]] = []
+        # 3. Decide for the whole world in one Gemini call, then commit.
+        #    Perception is recorded per-agent first so each actor's memory log
+        #    still reflects this cycle's events; the decision itself is batched
+        #    (engine/deliberation.py) so a 10-actor tick costs one request, not
+        #    ten. A malformed batch falls back to per-actor calls internally.
+        for agent in self.agents:
+            try:
+                agent.perceive(obs)
+            except Exception as exc:
+                log.warning("Perception failed for [%s]: %s", agent.name, exc)
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_agent = {
-                executor.submit(_process_single_agent, agent, obs): agent
-                for agent in self.agents
-            }
-            for future in as_completed(future_to_agent):
-                res = future.result()
-                agent_results.append(res)
+        decisions_by_id, mode = deliberation.deliberate(self.agents, obs)
+        log.info(
+            "Deliberation for tick %d completed in mode=%s (%d decisions).",
+            self.tick,
+            mode,
+            len(decisions_by_id),
+        )
+
+        agent_results: list[dict[str, Any]] = []
+        for agent in self.agents:
+            decision = decisions_by_id.get(agent.agent_id)
+            if decision is None:
+                # deliberate() guarantees a decision per agent, but stay defensive.
+                decision = {
+                    "action_type": "ignore",
+                    "target_country": "None",
+                    "reasoning": "No decision produced for this actor.",
+                    "relation_delta": 0.0,
+                }
+            agent_results.append(_commit_agent_decision(agent, decision))
 
         # Sort results by agent name for deterministic order
         agent_results.sort(key=lambda x: x["agent_name"])
@@ -146,6 +210,7 @@ class WorldEngine:
         # 4. Process decisions, aggregate relation shifts, and log reactions
         actions_taken = []
         relation_shifts = []
+        pending_reactions: list[dict[str, Any]] = []
 
         for res in agent_results:
             agent_id = res["agent_id"]
@@ -168,28 +233,42 @@ class WorldEngine:
 
             # Record relation shift details if target specified
             if target and target.lower() != "none" and delta != 0.0:
-                rel_info = helpers.get_relation(agent_id, target)
+                # `target` is a display name straight off the decision; resolve
+                # it so the lookup hits the same doc update_relation() wrote.
+                target_id = helpers.resolve_agent_id(target)
+                current_score = agent.relations.get(target)
+                if current_score is None:
+                    rel_info = helpers.get_relation(agent_id, target_id or target)
+                    current_score = rel_info.get("score", 0.0)
                 relation_shifts.append({
                     "source": agent_name,
                     "source_id": agent_id,
                     "target": target,
+                    "target_id": target_id,
                     "delta": delta,
-                    "new_score": rel_info.get("score", 0.0),
+                    "new_score": float(current_score),
                     "reasoning": reasoning,
                 })
 
-            # Attach reactions to event docs in MongoDB
+            # Queue reactions against every event doc; written in one bulk call
+            # below rather than agents x events separate round trips.
             for evt in events_for_tick:
                 evt_id = evt.get("event_id")
                 if evt_id:
-                    helpers.log_agent_reaction(
-                        event_id=evt_id,
-                        agent_id=agent_id,
-                        action_type=action_type,
-                        reasoning=reasoning,
-                        relation_delta=delta,
-                        target_country=target,
-                    )
+                    pending_reactions.append({
+                        "event_id": evt_id,
+                        "agent_id": agent_id,
+                        "action_type": action_type,
+                        "reasoning": reasoning,
+                        "relation_delta": delta,
+                        "target_country": target,
+                    })
+
+        if pending_reactions:
+            try:
+                helpers.log_agent_reactions_bulk(pending_reactions)
+            except Exception as exc:
+                log.warning("Failed to persist agent reactions for tick %d: %s", self.tick, exc)
 
         # 5. Compile & persist tick summary
         summary = {
@@ -197,6 +276,12 @@ class WorldEngine:
             "tick": self.tick,
             "timestamp": now_iso,
             "events_processed": [e.get("headline") for e in events_for_tick],
+            "duplicate_events": duplicate_events,
+            # "batch" = one Gemini call covered every actor; "batch+fallback" =
+            # some actors needed an individual call; "fallback" = the batch was
+            # unusable. Surfaced so a degrading model shows up in the tick log
+            # rather than only in stderr.
+            "deliberation_mode": mode,
             "actions_taken": actions_taken,
             "relation_shifts": relation_shifts,
         }

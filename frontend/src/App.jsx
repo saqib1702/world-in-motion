@@ -1,185 +1,90 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { io } from "socket.io-client";
+import { useEffect } from "react";
 
-import { API_BASE, getAgents, getEvents, getRelations, sendAgentMessage, triggerDemoEvent } from "./api";
-import RelationsGraph from "./components/RelationsGraph";
-import ChatPanel from "./components/ChatPanel";
-import EventFeed from "./components/EventFeed";
+import Foot from "./components/Foot";
+import Rail from "./components/Rail";
+import useWorldState from "./hooks/useWorldState";
+import Landing from "./pages/Landing";
+import Method from "./pages/Method";
+import Nations from "./pages/Nations";
+import Simulation from "./pages/Simulation";
+import { Link, useRouter } from "./router";
 
-function makeMessage(role, text) {
-  return {
-    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    role,
-    text
-  };
+/**
+ * Shell and route table.
+ *
+ * The live data layer is mounted here, above the switch, so one socket and one
+ * poll serve all four pages and nothing is refetched on navigation. See the
+ * long comment at the top of hooks/useWorldState.js.
+ */
+
+const ROUTES = {
+  "/": { title: "World in Motion — Multi-Agent Geopolitical Simulation", chrome: true },
+  "/simulation": { title: "Live board — World in Motion", chrome: false },
+  "/nations": { title: "Nations — World in Motion", chrome: true },
+  "/method": { title: "Method — World in Motion", chrome: true }
+};
+
+function NotFound() {
+  return (
+    <div className="wrap page">
+      <div className="notice">
+        <h3>No such page</h3>
+        <p>
+          That path is not part of the app. The four pages are the landing page, the live
+          board, the nations roster, and the method write-up.
+        </p>
+        <div className="btn-row">
+          <Link to="/" className="btn">
+            Back to the start
+          </Link>
+          <Link to="/simulation" className="btn btn-quiet">
+            Open the live board
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
-  const [agents, setAgents] = useState([]);
-  const [relations, setRelations] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [selectedAgentId, setSelectedAgentId] = useState("");
-  const [conversations, setConversations] = useState({});
-  const [demoHeadline, setDemoHeadline] = useState("Emergency Strait Blockade Disrupts Trade Lanes");
-  const [demoDescription, setDemoDescription] = useState("A sudden naval blockade has disrupted shipping across a critical maritime chokepoint.");
-  const [status, setStatus] = useState("Bootstrapping world state...");
-  const [busy, setBusy] = useState(false);
+  const { path } = useRouter();
+  const world = useWorldState();
 
-  const selectedAgent = useMemo(
-    () => agents.find((agent) => agent.agent_id === selectedAgentId) || null,
-    [agents, selectedAgentId]
-  );
+  const route = ROUTES[path];
+  // The simulation page is a full-viewport instrument: it sizes itself to the
+  // viewport and owns its own scrolling, so a footer under it would either be
+  // unreachable or force the scene to shrink.
+  const showFooter = route ? route.chrome : true;
 
-  const loadAll = useCallback(async () => {
-    const [agentRows, relationRows, eventRows] = await Promise.all([getAgents(), getRelations(), getEvents()]);
-    setAgents(agentRows);
-    setRelations(relationRows);
-    setEvents(eventRows);
-    if (!selectedAgentId && agentRows.length > 0) {
-      setSelectedAgentId(agentRows[0].agent_id);
-    }
-  }, [selectedAgentId]);
-
+  // A client-side route change does not update the title the way a real
+  // navigation does, and the title is what ends up in the history menu and in a
+  // bookmark.
   useEffect(() => {
-    let active = true;
+    document.title = route ? route.title : "Not found — World in Motion";
+  }, [route]);
 
-    async function start() {
-      try {
-        await loadAll();
-        if (active) setStatus("Live");
-      } catch (error) {
-        if (active) setStatus(`Load failed: ${error.message}`);
-      }
-    }
-
-    start();
-
-    const socket = io(API_BASE || undefined, {
-      path: "/socket.io",
-      transports: ["websocket", "polling"]
-    });
-
-    socket.on("connect", () => setStatus("Live via WebSocket"));
-    socket.on("disconnect", () => setStatus("Disconnected, retrying..."));
-    socket.on("relation_update", async () => {
-      try {
-        const updated = await getRelations();
-        if (active) setRelations(updated);
-      } catch (_error) {
-        // Keep existing state during transient network faults.
-      }
-    });
-
-    const eventPoll = setInterval(async () => {
-      try {
-        const latest = await getEvents();
-        if (active) setEvents(latest);
-      } catch (_error) {
-        // Polling is best effort.
-      }
-    }, 6000);
-
-    return () => {
-      active = false;
-      clearInterval(eventPoll);
-      socket.disconnect();
-    };
-  }, [loadAll]);
-
-  async function handleSendMessage(agentId, text) {
-    setConversations((prev) => {
-      const base = prev[agentId] || [];
-      return { ...prev, [agentId]: [...base, makeMessage("user", text)] };
-    });
-
-    try {
-      const response = await sendAgentMessage(agentId, text);
-      setConversations((prev) => {
-        const base = prev[agentId] || [];
-        return { ...prev, [agentId]: [...base, makeMessage("agent", response.reply || "No response")] };
-      });
-    } catch (error) {
-      setConversations((prev) => {
-        const base = prev[agentId] || [];
-        return { ...prev, [agentId]: [...base, makeMessage("agent", `Error: ${error.message}`)] };
-      });
-    }
-  }
-
-  async function handleTriggerEvent() {
-    const headline = demoHeadline.trim();
-    const description = demoDescription.trim();
-    if (!headline || !description) return;
-
-    setBusy(true);
-    setStatus("Triggering demo event tick...");
-    try {
-      const involved = selectedAgent ? [selectedAgent.agent_id] : agents.map((a) => a.agent_id);
-      await triggerDemoEvent({
-        headline,
-        description,
-        source: "demo_ui",
-        event_type: "manual_demo_event",
-        involved_agents: involved,
-        payload: { fabricated: true }
-      });
-      await loadAll();
-      setStatus("Demo event injected and tick processed");
-    } catch (error) {
-      setStatus(`Trigger failed: ${error.message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
+  let page;
+  if (path === "/") page = <Landing world={world} />;
+  else if (path === "/simulation") page = <Simulation world={world} />;
+  else if (path === "/nations") page = <Nations world={world} />;
+  else if (path === "/method") page = <Method world={world} />;
+  else page = <NotFound />;
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>World in Motion Command Deck</h1>
-          <p>Real-time diplomacy simulation with live relation streaming</p>
-        </div>
-        <span className="status-pill">{status}</span>
-      </header>
+    <div className="shell">
+      {/* First tab stop on every page: the rail has four links before the
+          content starts, and the live board has a canvas after that. */}
+      <a href="#main" className="sr-only">
+        Skip to content
+      </a>
 
-      <main className="layout-grid">
-        <section className="panel graph-panel">
-          <RelationsGraph
-            agents={agents}
-            relations={relations}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
-          />
-        </section>
+      <Rail />
 
-        <ChatPanel
-          agents={agents}
-          selectedAgentId={selectedAgentId}
-          conversations={conversations}
-          onSend={handleSendMessage}
-        />
-
-        <section className="panel inject-panel">
-          <div className="panel-title">Trigger Demo Event</div>
-          <label>
-            Headline
-            <input value={demoHeadline} onChange={(event) => setDemoHeadline(event.target.value)} />
-          </label>
-          <label>
-            Description
-            <textarea
-              rows={4}
-              value={demoDescription}
-              onChange={(event) => setDemoDescription(event.target.value)}
-            />
-          </label>
-          <button disabled={busy} onClick={handleTriggerEvent}>
-            {busy ? "Injecting..." : "Trigger Event + Tick"}
-          </button>
-        </section>
-
-        <EventFeed events={events} />
+      <main className="shell-main" id="main">
+        {page}
       </main>
+
+      {showFooter && <Foot disclaimer={world.meta.disclaimer} />}
     </div>
   );
 }

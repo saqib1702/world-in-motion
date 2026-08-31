@@ -1,0 +1,43 @@
+# Keep the build context small and, more importantly, keep secrets and
+# platform-specific binaries out of the image.
+
+# Secrets — never bake credentials into a layer. Inject at runtime instead
+# (ECS task definition secrets, or `docker run --env-file`).
+.env
+.env.*
+!.env.example
+
+# Version control and CI
+.git
+.gitignore
+.github
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Node — the image runs `npm ci` in the builder stage. Copying a host
+# node_modules would both bloat the context and shadow it with Windows-only
+# @rollup/@esbuild binaries that cannot run on Linux.
+frontend/node_modules
+frontend/dist
+node_modules
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.log
+
+# Tests and docs are not needed at runtime.
+tests
+README.md
+*.md
+!requirements.txt

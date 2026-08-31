@@ -1,6 +1,10 @@
 # --- Web layer ---
 Flask>=3.0,<4.0
 flask-socketio>=5.3,<6.0
+simple-websocket>=1.0      # REQUIRED for real WebSockets in async_mode="threading".
+                           # Without it flask-socketio silently serves long-polling
+                           # only, so the client's websocket upgrade is refused and
+                           # the Vite dev proxy reports ECONNABORTED.
 
 # --- Database (MongoDB Atlas) ---
 pymongo>=4.8,<5.0

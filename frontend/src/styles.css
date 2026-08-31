@@ -1,287 +1,1963 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+/* ==========================================================================
+   World in Motion — visual system
+   --------------------------------------------------------------------------
+   Direction: an antique brass instrument. The app models ten bodies exerting
+   force on each other, which is literally what an orrery does, so the whole
+   interface is built out of that object's materials — brass for the mechanism,
+   a tanned vellum ground for the plate it sits on, and verdigris (what brass
+   actually turns into) as the single cool note.
+
+   The brief fixes the ground to a light brown, so that axis is not up for
+   debate. The freedom left over went into the *value structure*: this is a
+   light, warmly-lit 3D scene rather than the usual dark-space WebGL default,
+   and the accent is a muted green drawn from the material rather than the
+   orange-clay that normally shows up next to brown.
+
+   Breakpoint: 900px, and only 900px. It is duplicated in
+   hooks/useMediaQuery.js as COMPACT_QUERY because layout is CSS but render
+   quality and the panel/dock swap are JS. If you change one, change both.
+   ========================================================================== */
 
 :root {
-  --bg-0: #070b12;
-  --bg-1: #101826;
-  --bg-2: #17243a;
-  --panel: rgba(20, 31, 49, 0.78);
-  --line: rgba(134, 168, 210, 0.2);
-  --text: #eaf2ff;
-  --muted: #9fb0c7;
-  --accent: #e4b560;
-  --accent-2: #6ea2d9;
-  --danger: #ff7676;
-  --good: #65cf87;
+  color-scheme: light;
+
+  /* --- Palette ---------------------------------------------------------- */
+  --sand: #e2d0b0;        /* page ground — a real tan, not an off-white */
+  --sand-deep: #d3bd97;   /* recessed areas, gutters, scene backdrop */
+  --vellum: #f0e5d0;      /* raised surfaces: plates and cards */
+  --walnut: #6a4b2a;      /* secondary text, rules */
+  --bistre: #322313;      /* primary text */
+  --brass: #b0812f;       /* the mechanism: dials, ticks, focus rings */
+  --verdigris: #3f7a6a;   /* accent + allied relations */
+  --oxide: #9a3b24;       /* hostile relations, destructive states */
+
+  /* Darker siblings for anything that has to carry text. The decorative
+     values above do not clear 4.5:1 on --sand; these do. */
+  --brass-ink: #6e4e11;
+  --verdigris-ink: #2c5a4e;
+
+  /* --- Type ------------------------------------------------------------- */
+  /* Fraunces is used sparingly and only large, where its optical-size and
+     WONK axes read as a hand-cut engraving rather than a webfont. */
+  --font-display: "Fraunces", "Hoefler Text", Georgia, "Times New Roman", serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* Every number in this app is a measurement, so figures are monospaced and
+     tabular — a relation score that shifts width as it changes is unreadable. */
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", ui-monospace, Consolas, monospace;
+
+  --step--1: clamp(0.76rem, 0.74rem + 0.1vw, 0.82rem);
+  --step-0: clamp(0.95rem, 0.92rem + 0.15vw, 1.02rem);
+  --step-1: clamp(1.1rem, 1.02rem + 0.4vw, 1.32rem);
+  --step-2: clamp(1.4rem, 1.2rem + 0.9vw, 1.9rem);
+  --step-3: clamp(1.9rem, 1.5rem + 2vw, 3rem);
+  --step-4: clamp(2.5rem, 1.6rem + 4.4vw, 5.4rem);
+
+  /* --- Space ------------------------------------------------------------ */
+  --sp-1: 0.35rem;
+  --sp-2: 0.7rem;
+  --sp-3: 1.1rem;
+  --sp-4: 1.7rem;
+  --sp-5: 2.6rem;
+  --sp-6: 4rem;
+  --sp-7: 6rem;
+
+  --measure: 62ch;
+  --shell-max: 1240px;
+  --rail-h: 62px;
+
+  /* --- Material --------------------------------------------------------- */
+  /* Warm shadows. A neutral grey shadow on a tan ground reads as dirt. */
+  --edge: color-mix(in srgb, var(--walnut) 26%, transparent);
+  --edge-strong: color-mix(in srgb, var(--walnut) 44%, transparent);
+  --lift-1: 0 1px 0 rgba(255, 250, 240, 0.6) inset,
+            0 2px 6px -2px rgba(50, 35, 19, 0.22);
+  --lift-2: 0 1px 0 rgba(255, 250, 240, 0.7) inset,
+            0 10px 26px -12px rgba(50, 35, 19, 0.4),
+            0 2px 6px -3px rgba(50, 35, 19, 0.24);
+  --lift-3: 0 1px 0 rgba(255, 250, 240, 0.8) inset,
+            0 26px 50px -20px rgba(50, 35, 19, 0.45),
+            0 4px 12px -4px rgba(50, 35, 19, 0.3);
+  --radius: 3px;   /* instruments have machined corners, not pillows */
+  --radius-lg: 6px;
+
+  --ease-out: cubic-bezier(0.22, 0.68, 0.24, 1);
 }
 
-* {
+/* --------------------------------------------------------------------------
+   Reset and base
+   -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
-  min-height: 100vh;
-  font-family: "Space Grotesk", "Segoe UI", sans-serif;
-  color: var(--text);
-  background:
-    radial-gradient(circle at 15% 15%, rgba(228, 181, 96, 0.22), transparent 40%),
-    radial-gradient(circle at 85% 20%, rgba(90, 121, 197, 0.28), transparent 48%),
-    linear-gradient(160deg, var(--bg-0), var(--bg-1) 46%, var(--bg-2));
+  min-height: 100%;
+  background: var(--sand);
+  color: var(--bistre);
+  font-family: var(--font-body);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* A faint woven grain. Two offset radial gradients rather than an image, so
+     it costs nothing and scales to any DPR. Keeps a large flat tan area from
+     looking like an unpainted div. */
+  background-image:
+    radial-gradient(circle at 20% 12%, rgba(255, 252, 244, 0.55), transparent 42%),
+    radial-gradient(circle at 82% 78%, rgba(176, 129, 47, 0.11), transparent 46%);
+  background-attachment: fixed;
 }
 
-.app-shell {
-  padding: 22px;
-}
-
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.topbar h1 {
+h1, h2, h3, h4 {
   margin: 0;
-  font-size: clamp(1.2rem, 2.4vw, 2rem);
-  letter-spacing: 0.02em;
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  font-variation-settings: "SOFT" 0, "WONK" 1;
 }
 
-.topbar p {
-  margin: 4px 0 0;
-  color: var(--muted);
+p {
+  margin: 0;
 }
 
-.status-pill {
-  border: 1px solid var(--line);
-  background: rgba(12, 19, 32, 0.8);
+a {
+  color: var(--verdigris-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--bistre);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* One focus treatment everywhere: a brass ring. Never removed — keyboard
+   navigation has to be visible on all four pages. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Repeating type roles
+   -------------------------------------------------------------------------- */
+
+/* Instrument-plate label: the small engraved caption on a dial. Used for
+   eyebrows, panel titles, table headers, nav items. */
+.plate-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brass-ink);
+}
+
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  max-width: var(--measure);
+  font-size: var(--step-1);
+  line-height: 1.5;
+  color: var(--walnut);
+}
+
+.prose {
+  max-width: var(--measure);
+  color: var(--walnut);
+}
+
+.prose > * + * {
+  margin-top: var(--sp-3);
+}
+
+.prose strong {
+  color: var(--bistre);
+  font-weight: 600;
+}
+
+/* Prose sitting directly under a plate-label inside a plate: smaller, and with
+   the gap the label needs rather than a full paragraph rhythm. */
+.prose-tight {
+  margin-top: var(--sp-2);
+  font-size: var(--step--1);
+}
+
+.muted {
+  color: var(--walnut);
+  font-size: var(--step--1);
+}
+
+/* The graduated arc off an armillary sphere, flattened into a rule. The tick
+   marks are a repeating-linear-gradient, so the divider carries the same
+   vocabulary as the 3D rings without being a picture of one. */
+.graduated-rule {
+  height: 9px;
+  border: 0;
+  margin: 0;
+  background:
+    linear-gradient(var(--edge-strong), var(--edge-strong)) left center / 100% 1px no-repeat,
+    repeating-linear-gradient(
+      to right,
+      var(--edge-strong) 0 1px,
+      transparent 1px 14px
+    ) left top / 100% 5px no-repeat;
+}
+
+/* --------------------------------------------------------------------------
+   Shell
+   -------------------------------------------------------------------------- */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.shell-main {
+  flex: 1 1 auto;
+  /* No min-height here: the simulation page wants to fill the viewport exactly
+     and the content pages want to grow. Each page sets its own. */
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  padding-inline: clamp(var(--sp-3), 4vw, var(--sp-6));
+}
+
+/* --------------------------------------------------------------------------
+   Top rail (nav)
+   -------------------------------------------------------------------------- */
+
+.rail {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: var(--rail-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding-inline: clamp(var(--sp-3), 4vw, var(--sp-5));
+  padding-top: env(safe-area-inset-top);
+  background: color-mix(in srgb, var(--sand) 88%, transparent);
+  backdrop-filter: saturate(1.3) blur(10px);
+  border-bottom: 1px solid var(--edge);
+  /* The brass hairline under the rail is the top edge of the instrument case. */
+  box-shadow: 0 1px 0 rgba(176, 129, 47, 0.35);
+}
+
+.rail-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--bistre);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rail-mark:hover {
+  color: var(--bistre);
+}
+
+/* Two spellings of the wordmark. Below 560px the full name plus three nav
+   labels overflow, and truncating navigation is worse than shortening a logo. */
+.mark-short {
+  display: none;
+}
+
+/* A turning brass ring, drawn in CSS so the mark itself is in motion on every
+   page without a second WebGL context. */
+.rail-ring {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--brass);
+  transform-style: preserve-3d;
+  animation: rail-ring-spin 14s linear infinite;
+}
+
+.rail-ring::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--verdigris);
+  transform: rotateX(64deg);
+}
+
+@keyframes rail-ring-spin {
+  from { transform: rotateY(0deg) rotateX(14deg); }
+  to { transform: rotateY(360deg) rotateX(14deg); }
+}
+
+.rail-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(var(--sp-2), 2vw, var(--sp-4));
+  margin-left: auto;
+}
+
+.rail-links a {
+  position: relative;
+  padding: 0.45rem 0.1rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--walnut);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rail-links a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.15rem;
+  height: 1.5px;
+  background: var(--brass);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.28s var(--ease-out);
+}
+
+.rail-links a:hover {
+  color: var(--bistre);
+}
+
+.rail-links a:hover::after,
+.rail-links a[aria-current="page"]::after {
+  transform: scaleX(1);
+}
+
+.rail-links a[aria-current="page"] {
+  color: var(--bistre);
+}
+
+/* --------------------------------------------------------------------------
+   Plates — the one surface primitive
+   -------------------------------------------------------------------------- */
+
+.plate {
+  position: relative;
+  background: var(--vellum);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--lift-1);
+}
+
+.plate-pad {
+  padding: clamp(var(--sp-3), 2.4vw, var(--sp-4));
+}
+
+/* Screwed to the case at the top-left, like a real nameplate. Decorative, so
+   it is a pseudo-element and never in the accessibility tree. */
+.plate-screwed::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #d8b878, var(--brass) 60%, #6e4e11);
+}
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  min-height: 44px;          /* touch target floor */
+  padding: 0.6rem 1.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--brass-ink);
+  background: linear-gradient(180deg, #c99a45, var(--brass) 55%, #8f6720);
+  color: #fff8e8;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--lift-1);
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out),
+    filter 0.18s var(--ease-out);
+}
+
+.btn:hover:not(:disabled) {
+  color: #fff8e8;
+  transform: translateY(-1px);
+  box-shadow: var(--lift-2);
+  filter: brightness(1.06);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--lift-1);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.55);
+  opacity: 0.6;
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--bistre);
+  border-color: var(--edge-strong);
+  box-shadow: none;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  color: var(--bistre);
+  background: color-mix(in srgb, var(--brass) 12%, transparent);
+  box-shadow: var(--lift-1);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+/* Panel submit buttons get the .btn treatment without having to carry the class,
+   because they are the only unqualified <button> inside a panel — .collapse-btn
+   and .linkish both name themselves and are excluded below. Doing it this way
+   keeps the three panel components free of presentational class lists.
+   Slightly tighter than a page-level .btn: these sit inside a 340px overlay. */
+.panel button:not(.collapse-btn):not(.linkish) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0.55rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--brass-ink);
+  background: linear-gradient(180deg, #c99a45, var(--brass) 55%, #8f6720);
+  color: #fff8e8;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--lift-1);
+  transition: filter 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+}
+
+.panel button:not(.collapse-btn):not(.linkish):hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow: var(--lift-2);
+}
+
+.panel button:not(.collapse-btn):not(.linkish):disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.55);
+  opacity: 0.6;
+}
+
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--verdigris-ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.linkish:hover {
+  color: var(--bistre);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
+   Form controls
+   -------------------------------------------------------------------------- */
+
+.field {
+  display: block;
+}
+
+.field > span,
+label > span.field-name {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass-ink);
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  /* 16px minimum: iOS Safari zooms the whole page when a focused input is
+     smaller than this, which then leaves the layout mid-zoom. */
+  font-size: max(16px, var(--step--1));
+  padding: 0.55rem 0.7rem;
+  background: #fbf5e8;
+  color: var(--bistre);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(50, 35, 19, 0.12) inset;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.5;
+  font-family: var(--font-body);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--walnut) 62%, transparent);
+}
+
+/* A disabled field on a read-only deployment. Recessed rather than greyed: the
+   palette has no grey, and washing a tan field toward white makes it read as
+   focused instead of unavailable. */
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background: color-mix(in srgb, var(--sand-deep) 55%, var(--vellum));
+  color: var(--walnut);
+  border-color: var(--edge);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+select {
+  appearance: none;
+  padding-right: 2rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--brass-ink) 50%),
+    linear-gradient(135deg, var(--brass-ink) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+/* --------------------------------------------------------------------------
+   Status + disclaimer pills
+   -------------------------------------------------------------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.28rem 0.6rem;
+  border: 1px solid var(--edge-strong);
   border-radius: 999px;
-  padding: 8px 12px;
-  font-size: 0.86rem;
+  background: color-mix(in srgb, var(--vellum) 80%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--walnut);
+  white-space: nowrap;
 }
 
-.layout-grid {
-  display: grid;
-  grid-template-columns: 1.7fr 1fr;
-  grid-template-rows: auto auto;
-  gap: 14px;
+.pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
+
+.pill.tone-ok { color: var(--verdigris-ink); border-color: color-mix(in srgb, var(--verdigris) 45%, transparent); }
+.pill.tone-warn { color: var(--brass-ink); border-color: color-mix(in srgb, var(--brass) 55%, transparent); }
+.pill.tone-error { color: var(--oxide); border-color: color-mix(in srgb, var(--oxide) 42%, transparent); }
+.pill.tone-pending { color: var(--walnut); }
+
+.pill.tone-pending::before {
+  animation: pill-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes pill-blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.pill-plain::before {
+  display: none;
+}
+
+/* The actors are real countries, so this label is load-bearing: it is the
+   difference between a simulation and a claim about policy. It is never
+   dismissible and never smaller than this. */
+.disclaimer-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--oxide) 30%, transparent);
+  border-left: 3px solid var(--oxide);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--oxide) 6%, var(--vellum));
+  color: var(--walnut);
+  font-size: var(--step--1);
+}
+
+.disclaimer-strip strong {
+  color: var(--oxide);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
+   Tilt: the CSS half of the "3D on every page" requirement
+   --------------------------------------------------------------------------
+   hooks/usePointerTilt.js writes --tilt-x / --tilt-y / --tilt-lift as inline
+   custom properties on the element. It never calls setState, so a pointer
+   sweeping across a grid of cards costs no React renders.
+   -------------------------------------------------------------------------- */
+
+.tilt {
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  --tilt-lift: 0px;
+  transform: perspective(900px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y))
+    translateZ(var(--tilt-lift));
+  transform-style: preserve-3d;
+  transition: transform 0.4s var(--ease-out), box-shadow 0.4s var(--ease-out);
+  will-change: transform;
+}
+
+.tilt.is-tilting {
+  /* While the pointer is over the card the transform is driven every frame, so
+     the easing has to get out of the way or it lags behind the cursor. */
+  transition: box-shadow 0.4s var(--ease-out);
+}
+
+.tilt-layer {
+  transform: translateZ(18px);
+}
+
+/* --------------------------------------------------------------------------
+   Ambient background canvas (nations + method pages)
+   -------------------------------------------------------------------------- */
+
+.ambient-field {
+  position: fixed;
+  inset: var(--rail-h) 0 0 0;
+  z-index: 0;
+  pointer-events: none;   /* the page scrolls and selects through it */
+  opacity: 0.42;
+}
+
+/* Anything that has to sit above the ambient canvas. Applied to the page wrapper
+   rather than to individual blocks, so there is one stacking decision per page
+   instead of a z-index per component. */
+.above-field {
+  position: relative;
+  z-index: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Sections shared by the content pages
+   -------------------------------------------------------------------------- */
+
+.page {
+  padding-block: var(--sp-6) var(--sp-7);
+}
+
+.page-head {
+  max-width: 46ch;
+}
+
+.page-head .eyebrow {
+  display: block;
+  margin-bottom: var(--sp-2);
+}
+
+.page-head h1 {
+  font-size: var(--step-3);
+  font-weight: 700;
+}
+
+.page-head .lede {
+  margin-top: var(--sp-3);
+}
+
+.band {
+  margin-top: var(--sp-6);
+}
+
+.band-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-4);
+}
+
+.band-head h2 {
+  font-size: var(--step-2);
+}
+
+/* Whatever follows the graduated rule inside a band gets the same gap, so pages
+   do not each invent their own spacing after a divider. */
+.band > .graduated-rule + * {
+  margin-top: var(--sp-4);
+}
+
+/* The permanent "simulated projections" note, when it appears as a page-level
+   block rather than inside the hero. */
+.page > .disclaimer-strip {
+  margin-top: var(--sp-4);
+  max-width: 70ch;
+}
+
+/* --------------------------------------------------------------------------
+   Landing page
+   -------------------------------------------------------------------------- */
+
+.hero {
+  position: relative;
+  /* Fill the viewport under the sticky rail, without the 100vh mobile-browser
+     bug where the URL bar makes the page scroll by exactly its own height. */
+  min-height: calc(100svh - var(--rail-h));
+  display: grid;
+  align-items: center;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.hero-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* A vignette so the type has a quiet field to sit on regardless of where a
+   sphere happens to be. Left-weighted on desktop, bottom-weighted when the
+   copy stacks under the mechanism. */
+.hero-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 90% at 12% 50%,
+    color-mix(in srgb, var(--sand) 88%, transparent) 0%,
+    color-mix(in srgb, var(--sand) 42%, transparent) 38%,
+    transparent 68%
+  );
+}
+
+.hero-body {
+  position: relative;
+  z-index: 1;
+  padding-block: var(--sp-6);
+  max-width: 34rem;
+}
+
+.hero-body h1 {
+  font-size: var(--step-4);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variation-settings: "SOFT" 0, "WONK" 1;
+}
+
+.hero-body h1 em {
+  font-style: italic;
+  color: var(--brass-ink);
+  font-variation-settings: "SOFT" 40, "WONK" 1;
+}
+
+.hero-body .lede {
+  margin-top: var(--sp-3);
+  max-width: 34ch;
+}
+
+.hero-body .btn-row {
+  margin-top: var(--sp-4);
+}
+
+.hero-body .disclaimer-strip {
+  margin-top: var(--sp-4);
+  max-width: 40ch;
+}
+
+/* Staged entrance: eyebrow, headline, lede, buttons, disclaimer. One
+   orchestrated sequence on load rather than five unrelated effects. */
+.stagger > * {
+  animation: rise 0.75s var(--ease-out) both;
+}
+
+.stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger > *:nth-child(2) { animation-delay: 0.14s; }
+.stagger > *:nth-child(3) { animation-delay: 0.24s; }
+.stagger > *:nth-child(4) { animation-delay: 0.34s; }
+.stagger > *:nth-child(5) { animation-delay: 0.44s; }
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: perspective(700px) translate3d(0, 18px, -40px) rotateX(6deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hero-scroll {
+  position: absolute;
+  left: 50%;
+  bottom: var(--sp-3);
+  z-index: 1;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--walnut);
+}
+
+.hero-scroll span {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.hero-scroll i {
+  width: 1px;
+  height: 26px;
+  background: linear-gradient(var(--brass), transparent);
+  animation: scroll-cue 2.2s ease-in-out infinite;
+}
+
+@keyframes scroll-cue {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.4; transform-origin: top; }
+  50% { transform: scaleY(1); opacity: 1; transform-origin: top; }
+}
+
+/* Readout strip: the numbers that describe the model. Real measurements, so
+   they are set in the mono face with tabular figures. */
+.readout-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin-top: var(--sp-6);
+  background: var(--edge);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.readout-cell {
+  padding: var(--sp-3);
+  background: var(--vellum);
+}
+
+.readout-cell dt {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brass-ink);
+}
+
+.readout-cell dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--bistre);
+}
+
+.readout-cell dd small {
+  display: block;
+  margin-top: 0.4rem;
+  font-family: var(--font-body);
+  font-size: var(--step--1);
+  font-weight: 400;
+  color: var(--walnut);
+  letter-spacing: 0;
+}
+
+/* The transport cell holds a sentence, not a figure, so it drops to the mono
+   face at label size rather than being set as a 30px numeral. Written as
+   `.readout-cell dd.readout-status` to out-specify `.readout-cell dd` honestly,
+   rather than reaching for !important and starting a specificity war. */
+.readout-cell dd.readout-status {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.readout-cell dd.readout-status.tone-ok { color: var(--verdigris-ink); }
+.readout-cell dd.readout-status.tone-warn { color: var(--brass-ink); }
+.readout-cell dd.readout-status.tone-error { color: var(--oxide); }
+.readout-cell dd.readout-status.tone-pending { color: var(--walnut); }
+
+/* Content below the full-height hero. The hero owns the top of the page, so this
+   only needs a floor under the last section. */
+.after-hero {
+  display: block;
+  padding-bottom: var(--sp-7);
+}
+
+/* --------------------------------------------------------------------------
+   The tick sequence
+   --------------------------------------------------------------------------
+   Numbered because this genuinely is a sequence — each step consumes the
+   previous step's output — and the order is information the reader needs.
+   -------------------------------------------------------------------------- */
+
+.movements {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  counter-reset: movement;
+}
+
+.movement {
+  padding: var(--sp-4) var(--sp-3) var(--sp-3);
+  counter-increment: movement;
+}
+
+.movement::after {
+  content: counter(movement, decimal-leading-zero);
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--brass) 70%, transparent);
+}
+
+.movement h3 {
+  font-size: var(--step-1);
+  margin-bottom: var(--sp-2);
+}
+
+.movement p {
+  color: var(--walnut);
+  font-size: var(--step--1);
+}
+
+.movement .movement-detail {
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px dashed var(--edge-strong);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: var(--brass-ink);
+}
+
+/* --------------------------------------------------------------------------
+   Nations page
+   -------------------------------------------------------------------------- */
+
+.nation-grid {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr));
+}
+
+.nation-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-3) var(--sp-3);
+}
+
+.nation-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.nation-card h3 {
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.nation-card .gov {
+  display: block;
+  margin-top: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--walnut);
+}
+
+/* Scoped to the card rather than written as a global `.plate-label + *`: a
+   general sibling rule would collide with .prose-tight elsewhere at identical
+   specificity, and which one won would depend on source order. */
+.nation-card .plate-label + * {
+  margin-top: 0.4rem;
+}
+
+/* Standing dial: mean relation score as a brass arc. This replaces what would
+   otherwise be a decorative index number — the dial is a measurement, an
+   index number would not be. */
+.dial {
+  --dial-turn: 0deg;
+  position: relative;
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(
+      from -90deg,
+      var(--dial-color) var(--dial-turn),
+      color-mix(in srgb, var(--walnut) 16%, transparent) var(--dial-turn)
+    );
+  box-shadow: 0 0 0 1px var(--edge-strong) inset;
+}
+
+.dial::after {
+  content: attr(data-value);
+  position: absolute;
+  inset: 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--vellum);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--bistre);
+}
+
+.interest-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.interest-list li {
+  position: relative;
+  padding-left: 1.1rem;
+  font-size: var(--step--1);
+  color: var(--walnut);
+}
+
+.interest-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 6px;
+  height: 1px;
+  background: var(--brass);
+}
+
+.stance-list {
+  margin: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.stance-row {
+  display: grid;
+  grid-template-columns: 1fr 44px;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--step--1);
+}
+
+.stance-row dt {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--walnut);
+}
+
+.stance-row dd {
+  margin: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* The bar sits behind the row so the label reads on top of it — a filled
+   gauge, not a label with a chart bolted alongside. */
+.stance-bar {
+  position: relative;
+  height: 3px;
+  margin-top: 0.15rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--walnut) 14%, transparent);
+  overflow: hidden;
+}
+
+.stance-bar i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Centred at 50%: a bar that grows left for hostile and right for allied
+     shows the sign without needing a legend. */
+  left: var(--bar-left, 50%);
+  width: var(--bar-width, 0%);
+  background: var(--bar-color, var(--brass));
+}
+
+.tone-allied { --bar-color: var(--verdigris); --dial-color: var(--verdigris); color: var(--verdigris-ink); }
+.tone-neutral { --bar-color: var(--brass); --dial-color: var(--brass); color: var(--brass-ink); }
+.tone-hostile { --bar-color: var(--oxide); --dial-color: var(--oxide); color: var(--oxide); }
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.tag {
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--walnut);
+}
+
+.tag.ally { border-color: color-mix(in srgb, var(--verdigris) 50%, transparent); color: var(--verdigris-ink); }
+.tag.rival { border-color: color-mix(in srgb, var(--oxide) 45%, transparent); color: var(--oxide); }
+
+/* --------------------------------------------------------------------------
+   Method page
+   -------------------------------------------------------------------------- */
+
+.method-layout {
+  display: grid;
+  gap: var(--sp-5);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.method-step {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  gap: var(--sp-3);
+  align-items: start;
+}
+
+.method-step-index {
+  font-family: var(--font-display);
+  font-size: var(--step-2);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: color-mix(in srgb, var(--brass) 85%, var(--walnut));
+}
+
+.method-step h3 {
+  font-size: var(--step-1);
+  margin-bottom: var(--sp-2);
+}
+
+.method-step .prose {
+  font-size: var(--step--1);
+}
+
+/* The source file each step lives in. */
+.method-step .step-where {
+  display: block;
+  margin-top: var(--sp-2);
+}
+
+.code-note {
+  display: block;
+  margin-top: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--brass);
+  background: color-mix(in srgb, var(--brass) 7%, var(--vellum));
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.6;
+  color: var(--brass-ink);
+  /* `code` does NOT preserve newlines the way `pre` does — without this the
+     multi-line snippets collapse onto one line. `pre` rather than `pre-wrap`
+     because these are aligned comment blocks that reflow into nonsense; the
+     overflow-x below is the escape hatch on a narrow screen. */
+  white-space: pre;
+  overflow-x: auto;
+  /* Momentum scrolling for the horizontal overflow on iOS. */
+  -webkit-overflow-scrolling: touch;
+}
+
+.two-col {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+/* Closing call to action. Its heading is a peer of the section headings above
+   it, not a page title, so it steps down one size. */
+.closing-plate h2 {
+  font-size: var(--step-1);
+}
+
+.closing-plate .btn-row {
+  margin-top: var(--sp-3);
+}
+
+/* --------------------------------------------------------------------------
+   Simulation page: scene + plates
+   -------------------------------------------------------------------------- */
+
+.sim-shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100svh - var(--rail-h));
+  min-height: 520px;
+}
+
+.sim-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) clamp(var(--sp-3), 4vw, var(--sp-5));
+  border-bottom: 1px solid var(--edge);
+  background: color-mix(in srgb, var(--sand) 70%, transparent);
+}
+
+.sim-bar h1 {
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.sim-bar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+
+.scene-wrapper {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;   /* lets the flex child actually shrink on iOS Safari */
+  background: var(--sand-deep);
+}
+
+.scene-container {
+  position: absolute;
+  inset: 0;
+}
+
+.scene-container canvas {
+  display: block;
+  touch-action: none;   /* the canvas owns pinch/drag, not the page */
+}
+
+/* The compact tab bar. Declared here rather than only inside the 900px block so
+   it has a desktop value to be overridden FROM — a rule that exists only inside
+   a media query has no cascade entry above the breakpoint, and `display: flex`
+   appearing from nowhere at 900px is harder to reason about than a default of
+   none being switched on. */
+.sim-dock {
+  display: none;
+}
+
+/* Compact only: the canvas stays mounted while another tab is showing, because
+   unmounting it would destroy the WebGL context and restart the force layout.
+   Collapsed to zero height rather than `display: none` — a display:none canvas
+   reports a zero-size bounding box, and r3f's ResizeObserver would then set the
+   drawing buffer to 0x0 and have to rebuild it on the way back. Zero height with
+   overflow hidden keeps the element in layout, and the RenderGovernor's
+   IntersectionObserver stops it drawing, which is the part that costs battery. */
+.scene-wrapper.is-stowed {
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-bottom: 0;
+}
+
+/* The board is a full-viewport instrument with no footer, so the disclaimer that
+   the other three pages get from <Foot> has to live here instead. It is the same
+   string from GET /meta either way. */
+.sim-disclaimer {
+  flex: none;
+  padding: var(--sp-2) clamp(var(--sp-3), 4vw, var(--sp-5));
+  padding-bottom: calc(var(--sp-2) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--edge);
+  background: color-mix(in srgb, var(--sand-deep) 45%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: var(--walnut);
+}
+
+.overlay {
+  position: absolute;
+  z-index: 5;
+  width: min(340px, 34vw);
+  max-height: calc(100% - var(--sp-4) * 2);
+  display: flex;
+  flex-direction: column;
+}
+
+.overlay.top-right { top: var(--sp-3); right: var(--sp-3); }
+.overlay.bottom-right { bottom: var(--sp-3); right: var(--sp-3); }
+.overlay.bottom-left { bottom: var(--sp-3); left: var(--sp-3); width: min(400px, 38vw); }
 
 .panel {
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--vellum) 94%, transparent);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--lift-2);
+}
+
+.panel.collapsed {
+  gap: 0;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
 }
 
 .panel-title {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--muted);
-  font-size: 0.75rem;
-  margin-bottom: 10px;
+  color: var(--brass-ink);
 }
 
-.graph-panel {
-  padding: 14px;
-  min-height: 580px;
-}
-
-.graph-shell {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.graph-svg {
-  width: 100%;
-  height: 520px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(6, 10, 18, 0.45), rgba(6, 10, 18, 0.7));
-  border: 1px solid rgba(144, 179, 220, 0.16);
-}
-
-.graph-legend {
-  margin-top: 10px;
-  display: flex;
-  gap: 14px;
-  color: var(--muted);
+.collapse-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--edge-strong);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--walnut);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
 }
 
-.legend-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-  margin-right: 6px;
+.collapse-btn:hover {
+  color: var(--bistre);
+  background: color-mix(in srgb, var(--brass) 14%, transparent);
 }
 
-.legend-dot.positive {
-  background: var(--good);
-}
-
-.legend-dot.neutral {
-  background: #90a0b4;
-}
-
-.legend-dot.hostile {
-  background: var(--danger);
-}
-
-.chat-panel {
-  padding: 14px;
+.legend {
+  position: absolute;
+  left: var(--sp-3);
+  top: var(--sp-3);
+  z-index: 4;
   display: flex;
-  flex-direction: column;
-  min-height: 580px;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vellum) 88%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--walnut);
 }
 
-.chat-agent-header {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  margin-bottom: 10px;
-  background: rgba(9, 16, 28, 0.64);
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.legend i {
+  width: 14px;
+  height: 2px;
+  border-radius: 999px;
+}
+
+.legend i.allied { background: var(--verdigris); }
+.legend i.neutral { background: var(--brass); }
+.legend i.hostile { background: var(--oxide); }
+
+/* --- chat --- */
+
+/* Tapping a 20px sphere on a phone is fiddly, so the roster is also a select.
+   It stays on desktop because clicking a 3D mesh is not a keyboard path to
+   selection, and this is. */
+.agent-select {
+  display: block;
 }
 
 .chat-stream {
-  flex: 1;
-  overflow: auto;
-  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
 }
 
 .chat-bubble {
-  margin-bottom: 10px;
-  border-radius: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--edge);
+  background: #fbf5e8;
+  font-size: var(--step--1);
 }
 
 .chat-bubble.user {
-  background: rgba(110, 162, 217, 0.15);
+  border-left: 2px solid var(--verdigris);
 }
 
 .chat-bubble.agent {
-  background: rgba(228, 181, 96, 0.15);
+  border-left: 2px solid var(--brass);
+}
+
+.chat-bubble.pending {
+  opacity: 0.75;
 }
 
 .chat-role {
   display: block;
-  font-size: 0.72rem;
+  margin-bottom: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.chat-bubble p {
-  margin: 0;
-  line-height: 1.45;
+  color: var(--brass-ink);
 }
 
 .chat-form {
-  margin-top: 10px;
+  display: grid;
+  gap: var(--sp-2);
 }
 
-textarea,
-input {
-  width: 100%;
-  margin-top: 6px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(7, 12, 21, 0.7);
-  color: var(--text);
-  padding: 10px;
-  font-family: inherit;
-}
-
-button {
-  margin-top: 10px;
-  border: none;
-  border-radius: 10px;
-  padding: 11px 14px;
-  background: linear-gradient(120deg, #d6a24a, #f2cd84);
-  color: #1f2634;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.inject-panel {
-  padding: 14px;
-}
+/* --- inject panel --- */
 
 .inject-panel label {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 10px;
+  display: grid;
+  gap: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brass-ink);
 }
 
-.event-panel {
-  padding: 14px;
-  min-height: 320px;
+.inject-target {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
 }
+
+/* Read-only deployment notice. Brass rather than oxide red: this is the expected
+   state of a public demo, not an error. */
+.inject-locked {
+  padding: 0.45rem 0.6rem;
+  border-left: 2px solid var(--brass);
+  background: color-mix(in srgb, var(--brass) 9%, var(--vellum));
+  font-size: var(--step--1);
+  line-height: 1.45;
+}
+
+/* --- event feed --- */
 
 .event-list {
-  max-height: 360px;
-  overflow: auto;
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  max-height: 38vh;
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
 }
 
 .event-card {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px;
-  background: rgba(10, 15, 26, 0.7);
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--edge);
+  border-left: 2px solid var(--brass);
+  border-radius: var(--radius);
+  background: #fbf5e8;
 }
 
 .event-card header {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
-  align-items: flex-start;
+  gap: var(--sp-2);
 }
 
 .event-card h4 {
-  margin: 0;
-  font-size: 0.94rem;
+  font-family: var(--font-body);
+  font-size: var(--step--1);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0;
+  color: var(--bistre);
 }
 
 .event-card header span,
-.event-card footer span,
-.muted {
-  color: var(--muted);
-  font-size: 0.78rem;
+.event-card footer {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--walnut);
+  white-space: nowrap;
 }
 
-.event-card p {
-  margin: 8px 0;
-  line-height: 1.4;
+.event-card > p {
+  margin-top: 0.35rem;
+  font-size: var(--step--1);
+  color: var(--walnut);
 }
 
 .event-card footer {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: 0.45rem;
+  white-space: normal;
+}
+
+.reaction-list {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0 0;
+  border-top: 1px dashed var(--edge-strong);
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.reaction-list li {
+  font-size: var(--step--1);
+}
+
+.reaction-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.reaction-head strong {
+  color: var(--bistre);
+  font-size: var(--step--1);
+}
+
+.reaction-action {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--walnut);
+}
+
+.reaction-delta {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.reaction-delta.up { color: var(--verdigris-ink); }
+.reaction-delta.down { color: var(--oxide); }
+
+.reaction-list li p {
+  margin-top: 0.2rem;
+  color: var(--walnut);
+}
+
+/* --- 3D scene labels and loader (rendered through drei's <Html>) --- */
+
+.node-label-pill {
+  padding: 0.18rem 0.5rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vellum) 92%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bistre);
+  white-space: nowrap;
+  transform: translateZ(0);
+}
+
+.node-label-pill.selected {
+  border-color: var(--brass);
+  background: var(--brass);
+  color: #fff8e8;
+}
+
+.node-label-pill.hovered {
+  border-color: var(--verdigris);
+}
+
+.scene-loader-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--edge-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vellum) 90%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--walnut);
+  white-space: nowrap;
+}
+
+.spinner-ring {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 1.5px solid color-mix(in srgb, var(--brass) 35%, transparent);
+  border-top-color: var(--brass);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --------------------------------------------------------------------------
+   Footer
+   -------------------------------------------------------------------------- */
+
+.foot {
+  border-top: 1px solid var(--edge);
+  background: color-mix(in srgb, var(--sand-deep) 55%, transparent);
+  padding-block: var(--sp-4);
+  padding-bottom: calc(var(--sp-4) + env(safe-area-inset-bottom));
+}
+
+.foot-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
   justify-content: space-between;
 }
 
-@media (max-width: 1080px) {
-  .layout-grid {
-    grid-template-columns: 1fr;
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.foot a {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--walnut);
+  text-decoration: none;
+}
+
+.foot a:hover {
+  color: var(--bistre);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
+   Empty and error states — direction, not mood
+   -------------------------------------------------------------------------- */
+
+.notice {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px dashed var(--edge-strong);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--vellum) 60%, transparent);
+  text-align: left;
+}
+
+.notice h3 {
+  font-size: var(--step-1);
+}
+
+.notice p {
+  max-width: 52ch;
+  color: var(--walnut);
+  font-size: var(--step--1);
+}
+
+/* --------------------------------------------------------------------------
+   Compact: 900px. Matches COMPACT_QUERY in hooks/useMediaQuery.js.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  :root {
+    --rail-h: 56px;
   }
 
-  .graph-panel,
-  .chat-panel {
-    min-height: auto;
+  .rail {
+    gap: var(--sp-2);
   }
 
-  .graph-svg {
-    height: 420px;
+  .rail-links {
+    gap: var(--sp-2);
+  }
+
+  .rail-links a {
+    font-size: 0.62rem;
+    letter-spacing: 0.1em;
+  }
+
+  .hero {
+    /* Copy under the mechanism rather than beside it, so neither is cramped. */
+    align-items: end;
+    min-height: calc(100svh - var(--rail-h));
+  }
+
+  .hero-canvas::after {
+    background: radial-gradient(
+      140% 70% at 50% 100%,
+      color-mix(in srgb, var(--sand) 94%, transparent) 0%,
+      color-mix(in srgb, var(--sand) 55%, transparent) 42%,
+      transparent 76%
+    );
+  }
+
+  .hero-body {
+    padding-bottom: var(--sp-6);
+    max-width: none;
+  }
+
+  .hero-scroll {
+    display: none;   /* the copy already sits at the fold on a phone */
+  }
+
+  .sim-shell {
+    height: auto;
+    min-height: 0;
+  }
+
+  .scene-wrapper {
+    /* A fixed slice of the viewport, so the dock below it is always reachable
+       without scrolling the scene off screen. */
+    flex: none;
+    height: 52svh;
+    min-height: 300px;
+  }
+
+  .sim-dock {
+    display: flex;
+    position: sticky;
+    top: var(--rail-h);
+    z-index: 6;
+    gap: 1px;
+    background: var(--edge);
+    border-bottom: 1px solid var(--edge);
+  }
+
+  .sim-dock button {
+    flex: 1 1 0;
+    min-height: 46px;
+    padding: 0.5rem 0.3rem;
+    border: 0;
+    background: var(--sand);
+    color: var(--walnut);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .sim-dock button.active {
+    background: var(--vellum);
+    color: var(--bistre);
+    box-shadow: inset 0 -2px 0 var(--brass);
+  }
+
+  .sim-sheet {
+    padding: var(--sp-3) clamp(var(--sp-3), 4vw, var(--sp-4)) var(--sp-5);
+  }
+
+  .sim-sheet .panel {
+    box-shadow: var(--lift-1);
+  }
+
+  .chat-stream,
+  .event-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .method-step {
+    grid-template-columns: 2.4rem minmax(0, 1fr);
+    gap: var(--sp-2);
+  }
+
+  .legend {
+    font-size: 0.56rem;
+    gap: var(--sp-1) var(--sp-2);
+    padding: 0.3rem 0.55rem;
+  }
+
+  /* Tilt is a pointer affordance. On a touch screen there is no hover state to
+     tilt into, and a transform that only fires on tap reads as a glitch. */
+  .tilt {
+    transform: none;
+  }
+
+  .tilt-layer {
+    transform: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .mark-full {
+    display: none;
+  }
+
+  .mark-short {
+    display: inline;
+  }
+
+  .readout-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .foot-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced motion
+   --------------------------------------------------------------------------
+   The 3D scenes handle this themselves (they stop auto-rotating and skip the
+   relation pulse); this covers everything driven by CSS. Transitions on
+   discrete state changes are kept short rather than removed, because an
+   instant swap with no feedback is its own accessibility problem.
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.12s !important;
+    scroll-behavior: auto !important;
+  }
+
+  .stagger > * {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .tilt {
+    transform: none;
+  }
+
+  .rail-ring {
+    animation: none;
+    transform: rotateX(14deg);
   }
 }

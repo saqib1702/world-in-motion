@@ -164,45 +164,80 @@ class NationAgent(Agent):
             temperature=0.3,
         )
 
+        decision = self.parse_decision(raw_response)
+        return self.apply_decision(decision)
+
+    def parse_decision(self, raw_response: str) -> dict[str, Any]:
+        """Parse a raw JSON decision, falling back to an inert action."""
         try:
-            decision = json.loads(raw_response)
+            parsed = json.loads(raw_response)
         except json.JSONDecodeError as exc:
             log.error("Failed to parse JSON decision from Gemini for %s: %s", self.name, exc)
-            decision = {
+            return {
                 "action_type": "ignore",
                 "target_country": "None",
                 "reasoning": f"Fallback due to response parsing error: {raw_response[:100]}",
                 "relation_delta": 0.0,
             }
+        if not isinstance(parsed, dict):
+            return {
+                "action_type": "ignore",
+                "target_country": "None",
+                "reasoning": "Fallback: decision payload was not an object.",
+                "relation_delta": 0.0,
+            }
+        return parsed
 
+    def apply_decision(self, decision: dict[str, Any]) -> dict[str, Any]:
+        """Commit an already-made decision to relations, memory, and the DB.
+
+        Split out from `decide()` so the batched deliberation path (one Gemini
+        call for the whole world, see engine/deliberation.py) commits results
+        through exactly the same code as the per-agent path — including the
+        agent_id canonicalisation below, which is the guard that keeps display
+        names out of the `relations` collection.
+        """
         # Apply relation shift if target country is specified
         target = decision.get("target_country", "None")
         delta = float(decision.get("relation_delta", 0.0))
         reasoning = decision.get("reasoning", "")
         if target and target.lower() != "none" and delta != 0.0:
-            current_standing = self.relations.get(target, 0.0)
-            new_standing = max(-100.0, min(100.0, current_standing + delta))
-            self.relations[target] = new_standing
-
-            # Update pairwise relation collection via helpers
-            try:
-                helpers.update_relation(
-                    source_agent_id=self.agent_id,
-                    target_agent_id=target,
-                    delta=delta,
-                    reasoning=reasoning,
+            # Gemini answers with a display name ("Solaria Federation"); the
+            # persona.relations dict is intentionally keyed that way because it
+            # is rendered straight into prompts. The `relations` collection, by
+            # contrast, must be keyed by canonical agent_id so the frontend can
+            # join edges to nodes — resolve before persisting.
+            target_id = helpers.resolve_agent_id(target)
+            if target_id is None:
+                log.warning(
+                    "Agent [%s] chose unknown target_country %r; skipping relation write",
+                    self.name,
+                    target,
                 )
-            except Exception as exc:
-                log.warning("Failed to update relation collection for [%s -> %s]: %s", self.agent_id, target, exc)
+            else:
+                current_standing = self.relations.get(target, 0.0)
+                new_standing = max(-100.0, min(100.0, current_standing + delta))
+                self.relations[target] = new_standing
 
-            log.info(
-                "Agent [%s] updated relation with [%s]: %.1f -> %.1f (delta: %.1f)",
-                self.name,
-                target,
-                current_standing,
-                new_standing,
-                delta,
-            )
+                # Update pairwise relation collection via helpers (keyed by id)
+                try:
+                    helpers.update_relation(
+                        source_agent_id=self.agent_id,
+                        target_agent_id=target_id,
+                        delta=delta,
+                        reasoning=reasoning,
+                    )
+                except Exception as exc:
+                    log.warning("Failed to update relation collection for [%s -> %s]: %s", self.agent_id, target_id, exc)
+
+                log.info(
+                    "Agent [%s] updated relation with [%s]: %.1f -> %.1f (delta: %.1f)",
+                    self.name,
+                    target,
+                    current_standing,
+                    new_standing,
+                    delta,
+                )
 
         # Record action in memory log & memory collection
         action_record = {
@@ -275,21 +310,63 @@ class NationAgent(Agent):
         relations_str = json.dumps(self.relations, indent=2)
 
         return (
-            f"You are the strategic leadership of {self.name}, a {self.government_type}.\n"
-            f"Your core interests are: {interests_str}.\n"
-            f"Diplomatic allegiances:\n"
-            f"- Allies: {allies_str}\n"
-            f"- Rivals: {rivals_str}\n\n"
-            f"Current diplomatic relations (standing scale: -100 hostile to +100 allied):\n"
+            f"You are modelling the strategic decision-making of {self.name}, a {self.government_type}.\n"
+            f"Structural interests: {interests_str}.\n"
+            f"Alignment:\n"
+            f"- Closest partners: {allies_str}\n"
+            f"- Principal strategic competitors: {rivals_str}\n\n"
+            f"Current relation standings (scale: -100 hostile to +100 aligned):\n"
             f"{relations_str}\n\n"
-            f"Act strictly according to your nation's persona, geopolitical goals, ideological stance, and strategic self-interest."
+            f"Reason from this actor's structural incentives, stated policy priorities, and "
+            f"strategic self-interest. This is an analytical simulation: produce a plausible "
+            f"projection of how this actor would respond, not a claim about actual policy, and "
+            f"never fabricate quotations from named real officials."
         )
+
+    def persona_brief(self) -> dict[str, Any]:
+        """Compact persona summary for the batched world-deliberation prompt.
+
+        Deliberately smaller than the single-agent system prompt: ten of these
+        share one context window, so each actor gets its incentives and current
+        standings but not its full memory log.
+        """
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "government_type": self.government_type,
+            "core_interests": self.core_interests,
+            "closest_partners": self.allies,
+            "principal_competitors": self.rivals,
+            "relations": self.relations,
+        }
+
+    def _known_nation_names(self) -> list[str]:
+        """Names of every other nation, for constraining target_country.
+
+        Sourced from the DB roster so it stays correct as nations are added or
+        renamed; falls back to the persona's own relation keys if the DB is
+        unreachable.
+        """
+        try:
+            names = [
+                doc["name"]
+                for doc in helpers.list_agents(agent_type="nation")
+                if doc.get("name") and doc.get("agent_id") != self.agent_id
+            ]
+            if names:
+                return sorted(names)
+        except Exception as exc:
+            log.debug("Falling back to persona relations for nation roster: %s", exc)
+        return sorted(n for n in self.relations if n != self.name)
 
     def _build_decide_user_prompt(self, observation: Optional[Observation] = None) -> str:
         memory_str = json.dumps(self.recent_memory[-10:], indent=2) if self.recent_memory else "No recent memory."
         obs_str = ""
         if observation:
             obs_str = f"\nCurrent Tick: {observation.tick}\nEvents: {json.dumps(observation.events)}\nWorld State: {json.dumps(observation.world_state)}"
+
+        known = self._known_nation_names()
+        roster = "\n".join(f"- {n}" for n in known) if known else "- (no other nations known)"
 
         return (
             f"### GEOPOLITICAL CONTEXT & RECENT MEMORY\n"
@@ -298,7 +375,10 @@ class NationAgent(Agent):
             f"{obs_str}\n\n"
             f"### TASK\n"
             f"Analyze the recent events and current situation. Select the single best strategic diplomatic action for {self.name} to take right now.\n\n"
-            f"Choose target_country from known nations or 'None' if general/none.\n"
+            f"### VALID TARGETS\n"
+            f"target_country MUST be copied verbatim from this list, or be exactly \"None\":\n"
+            f"{roster}\n"
+            f"Never target yourself ({self.name}). Do not invent nations, abbreviate names, or use adjectives.\n\n"
             f"Assign relation_delta (numerical score from -20.0 to +20.0) reflecting how your relationship with target_country changes as a result of this action."
         )
 

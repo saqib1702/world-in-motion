@@ -5,7 +5,13 @@ imports the vendor SDK directly — swapping models or providers stays a
 one-file change. Agent-specific prompting belongs in /agents, not here.
 """
 
+import collections
+import json
 import logging
+import os
+import re
+import threading
+import time
 from typing import Optional
 
 from google import genai
@@ -18,9 +24,43 @@ log = logging.getLogger(__name__)
 _client: Optional[genai.Client] = None
 
 
-import json
-import os
-import re
+class RateLimiter:
+    """Sliding window thread-safe rate limiter ensuring max_calls within period_seconds."""
+
+    def __init__(self, max_calls: int = 5, period_seconds: float = 60.0) -> None:
+        self.max_calls = max_calls
+        self.period_seconds = period_seconds
+        self.timestamps: collections.deque[float] = collections.deque()
+        self.lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Block until a request slot becomes available within the sliding window."""
+        while True:
+            with self.lock:
+                now = time.time()
+                while self.timestamps and (now - self.timestamps[0]) >= self.period_seconds:
+                    self.timestamps.popleft()
+
+                if len(self.timestamps) < self.max_calls:
+                    self.timestamps.append(now)
+                    return
+
+                wait_time = self.period_seconds - (now - self.timestamps[0]) + 0.1
+                log.info(
+                    "Gemini rate limit threshold reached (%d/%d calls in %.0fs window). Throttling next API call for %.1fs...",
+                    len(self.timestamps),
+                    self.max_calls,
+                    self.period_seconds,
+                    wait_time,
+                )
+            time.sleep(wait_time)
+
+
+GEMINI_RATE_LIMITER = RateLimiter(
+    max_calls=getattr(config, "GEMINI_MAX_RPM", 5),
+    period_seconds=60.0,
+)
+
 
 def get_client() -> genai.Client:
     """Return the shared Gemini client, creating it on first use."""
@@ -35,60 +75,203 @@ def get_client() -> genai.Client:
     return _client
 
 
+# --- Model resolution -------------------------------------------------------
+# A wrong GEMINI_MODEL is the single most common way this app "runs" while doing
+# no real reasoning: every call 404s, falls through to the mock generator, and
+# the simulation looks alive. So the first NOT_FOUND triggers a one-time walk of
+# the fallback chain, and the winner is cached for the process.
+
+_resolved_model: Optional[str] = None
+_model_lock = threading.Lock()
+
+
+def _is_not_found(err: str) -> bool:
+    lowered = err.lower()
+    return "404" in lowered or "not_found" in lowered or "not found" in lowered
+
+
+def _is_rate_limited(err: str) -> bool:
+    lowered = err.lower()
+    return (
+        "429" in lowered
+        or "resource_exhausted" in lowered
+        or "rate limit" in lowered
+        or "quota" in lowered
+    )
+
+
+def active_model() -> str:
+    """The model currently in use (post-fallback), for diagnostics."""
+    return _resolved_model or config.GEMINI_MODEL
+
+
+def list_available_models() -> list[str]:
+    """Model IDs this API key can actually call. Raises on transport failure."""
+    return [
+        getattr(m, "name", str(m)).replace("models/", "")
+        for m in get_client().models.list()
+    ]
+
+
+def _candidate_models(explicit: Optional[str]) -> list[str]:
+    """Configured model first, then the fallback chain, de-duplicated."""
+    if explicit:
+        return [explicit]
+    ordered = [_resolved_model or config.GEMINI_MODEL]
+    ordered += [m for m in config.GEMINI_FALLBACK_MODELS]
+    seen: set[str] = set()
+    unique = []
+    for m in ordered:
+        if m and m not in seen:
+            seen.add(m)
+            unique.append(m)
+    return unique
+
+
+def _remember_model(model: str) -> None:
+    global _resolved_model
+    with _model_lock:
+        if _resolved_model != model:
+            _resolved_model = model
+            if model != config.GEMINI_MODEL:
+                log.warning(
+                    "GEMINI_MODEL=%r is not available to this API key. "
+                    "Falling back to %r for the rest of this process — "
+                    "update your .env to make this permanent.",
+                    config.GEMINI_MODEL,
+                    model,
+                )
+
+
+def _mock_roster() -> list[tuple[str, str]]:
+    """(agent_id, display_name) for the seeded roster.
+
+    Imported lazily: db.seed imports agents.nation, which imports this module,
+    so a module-level import would be circular.
+    """
+    try:
+        from db.seed import STARTER_NATIONS
+
+        return [(n["agent_id"], n["name"]) for n in STARTER_NATIONS]
+    except Exception:  # pragma: no cover - only if seed data is unavailable
+        return []
+
+
+def _mock_actor_name(system_instruction: str) -> str:
+    """Best-effort extraction of which actor a single-agent prompt is for."""
+    patterns = (
+        r"strategic decision-making of ([^,\n]+)",  # _build_decide_system_prompt
+        r"leadership of ([^,\n]+)",                 # speak()
+    )
+    for pattern in patterns:
+        match = re.search(pattern, system_instruction)
+        if match:
+            return match.group(1).strip()
+    return "Nation"
+
+
+def _mock_decision_for(actor_name: str, prompt: str, roster: list[str]) -> dict:
+    """One plausible mock decision, guaranteed to name a real roster target.
+
+    The target must resolve through helpers.resolve_agent_id or the relation
+    write is silently dropped, so this only ever picks from the live roster —
+    never a hardcoded name that a reseed could retire.
+    """
+    others = [n for n in roster if n.lower() != actor_name.lower()]
+
+    target_country = "None"
+    if others:
+        # Prefer an actor the events actually mention; that makes demo mode
+        # trace back to the headline the same way live mode does.
+        mentioned = [n for n in others if n.lower() in prompt.lower()]
+        pool = mentioned or others
+        # Deterministic per actor, so a demo run is reproducible but not uniform.
+        target_country = pool[hash(actor_name) % len(pool)]
+
+    lowered = prompt.lower()
+    if "tariff" in lowered or "sanction" in lowered or "export control" in lowered:
+        action_type, delta = "impose_sanction", -15.0
+        reasoning = (
+            f"{actor_name} weighs retaliatory trade measures against {target_country} "
+            f"to protect exposed domestic sectors."
+        )
+    elif "treaty" in lowered or "alliance" in lowered or "summit" in lowered or "accord" in lowered:
+        action_type, delta = "propose_alliance", 15.0
+        reasoning = (
+            f"{actor_name} seeks to convert the current opening into a durable "
+            f"arrangement with {target_country}."
+        )
+    elif "military" in lowered or "naval" in lowered or "missile" in lowered or "troops" in lowered:
+        action_type, delta = "military_warning", -12.0
+        reasoning = (
+            f"{actor_name} signals that continued escalation by {target_country} "
+            f"would draw a proportionate response."
+        )
+    elif "energy" in lowered or "oil" in lowered or "gas" in lowered or "opec" in lowered:
+        action_type, delta = "trade_agreement", 10.0
+        reasoning = (
+            f"{actor_name} moves to secure supply terms with {target_country} while "
+            f"prices remain favourable."
+        )
+    else:
+        action_type, delta = "issue_statement", -5.0
+        reasoning = (
+            f"{actor_name} issues a measured statement on the reported developments "
+            f"involving {target_country}."
+        )
+
+    if target_country == "None":
+        action_type, delta = "ignore", 0.0
+        reasoning = f"{actor_name} sees no material stake in the reported developments."
+
+    return {
+        "action_type": action_type,
+        "target_country": target_country,
+        "reasoning": f"[DEMO MODE — not live model reasoning] {reasoning}",
+        "relation_delta": delta,
+    }
+
+
 def _generate_mock_fallback(
     prompt: str,
     system_instruction: Optional[str] = None,
     response_mime_type: Optional[str] = None,
+    response_schema: Optional[dict] = None,
 ) -> str:
-    """Generate structured mock JSON or text response when Gemini API is unconfigured/offline."""
-    if response_mime_type == "application/json":
-        # Extract nation name and prompt details for realistic mock reasoning
-        sys_str = system_instruction or ""
-        nation_match = re.search(r"leadership of ([^,\n]+)", sys_str)
-        nation_name = nation_match.group(1) if nation_match else "Nation"
+    """Structured mock JSON or text, for when Gemini is unconfigured or offline.
 
-        # Determine target nation from prompt or default, ensuring agent does not target itself
-        target_country = "Ironreach Dominion" if nation_name != "Ironreach Dominion" else "Republic of Eldoria"
-        if "Solaria Federation" in prompt and nation_name != "Solaria Federation":
-            target_country = "Solaria Federation"
-        elif "Republic of Eldoria" in prompt and nation_name != "Republic of Eldoria":
-            target_country = "Republic of Eldoria"
-        elif "Verdant Union" in prompt and nation_name != "Verdant Union":
-            target_country = "Verdant Union"
-        elif "Ironreach Dominion" in prompt and nation_name != "Ironreach Dominion":
-            target_country = "Ironreach Dominion"
+    Every reasoning string is prefixed "[DEMO MODE ...]" so simulated-but-fake
+    output is never mistaken for live model reasoning in the UI or the DB.
+    """
+    sys_str = system_instruction or ""
 
+    if response_mime_type != "application/json":
+        return (
+            f"[DEMO MODE — not live model reasoning] As the representative of "
+            f"{_mock_actor_name(sys_str)}, we remain committed to our core interests, "
+            f"regional stability, and continued diplomatic engagement."
+        )
 
-        # Determine realistic action & delta
-        action_type = "issue_statement"
-        delta = -10.0
-        if "tariffs" in prompt.lower() or "tariff" in prompt.lower():
-            action_type = "impose_sanction"
-            delta = -15.0
-            reasoning = f"{nation_name} imposes retaliatory tariffs and diplomatic sanctions against {target_country}."
-        elif "peace" in prompt.lower() or "treaty" in prompt.lower() or "alliance" in prompt.lower():
-            action_type = "propose_alliance"
-            delta = +15.0
-            reasoning = f"{nation_name} welcomes diplomatic dialogue and proposes a strategic treaty with {target_country}."
-        elif "naval" in prompt.lower() or "military" in prompt.lower():
-            action_type = "military_warning"
-            delta = -12.0
-            reasoning = f"{nation_name} issues an urgent military warning in response to aggressive maneuvers by {target_country}."
-        else:
-            reasoning = f"{nation_name} issues a formal diplomatic statement addressing the recent geopolitical events involving {target_country}."
+    roster = _mock_roster()
+    names = [name for _agent_id, name in roster]
 
-        mock_payload = {
-            "action_type": action_type,
-            "target_country": target_country,
-            "reasoning": reasoning,
-            "relation_delta": delta,
-        }
-        return json.dumps(mock_payload)
-    else:
-        sys_str = system_instruction or ""
-        nation_match = re.search(r"leadership of ([^,\n]+)", sys_str)
-        nation_name = nation_match.group(1) if nation_match else "our nation"
-        return f"As the official representative of {nation_name}, we stand firmly committed to defending our national interests, maintaining sovereign stability, and engaging in strategic diplomacy."
+    # The batched world-deliberation call expects {"decisions": [...]}, one entry
+    # per actor. Detected from the prompt's roster marker or the schema shape so
+    # demo mode exercises the same code path as live mode.
+    wants_batch = "### ACTOR ROSTER" in prompt or (
+        isinstance(response_schema, dict)
+        and "decisions" in (response_schema.get("properties") or {})
+    )
+
+    if wants_batch and roster:
+        decisions = []
+        for agent_id, name in roster:
+            decision = _mock_decision_for(name, prompt, names)
+            decision["agent_id"] = agent_id
+            decisions.append(decision)
+        return json.dumps({"decisions": decisions})
+
+    return json.dumps(_mock_decision_for(_mock_actor_name(sys_str), prompt, names))
 
 
 def generate(
@@ -99,11 +282,28 @@ def generate(
     temperature: Optional[float] = None,
     response_mime_type: Optional[str] = None,
     response_schema: Optional[dict] = None,
+    max_retries: int = 2,
+    initial_backoff: float = 2.0,
 ) -> str:
-    """Send one prompt, return response text. Falls back to mock generator if API key missing or call fails."""
+    """Send one prompt, return response text.
+
+    Two distinct failure modes are handled differently, because retrying the
+    wrong one wastes the whole rate-limit budget:
+
+    * **Model unavailable (404/NOT_FOUND)** — retrying is pointless, the ID will
+      never appear. Move straight to the next model in
+      ``config.GEMINI_FALLBACK_MODELS`` and cache whichever one answers.
+    * **Rate limit / transport error (429, 5xx, timeout)** — the model is fine,
+      so back off exponentially and retry the *same* model.
+
+    Only after every candidate is exhausted does this fall back to the mock
+    generator, so a continuous run degrades loudly rather than silently.
+    """
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
-        return _generate_mock_fallback(prompt, system_instruction, response_mime_type)
+        return _generate_mock_fallback(
+            prompt, system_instruction, response_mime_type, response_schema
+        )
 
     cfg = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -111,16 +311,86 @@ def generate(
         response_mime_type=response_mime_type,
         response_schema=response_schema,
     )
-    try:
-        response = get_client().models.generate_content(
-            model=model or config.GEMINI_MODEL,
-            contents=prompt,
-            config=cfg,
-        )
-        return response.text or ""
-    except Exception as exc:
-        log.warning("Gemini API call failed: %s. Falling back to mock generator.", exc)
-        return _generate_mock_fallback(prompt, system_instruction, response_mime_type)
+
+    candidates = _candidate_models(model)
+    last_error: Optional[Exception] = None
+
+    for candidate in candidates:
+        backoff = initial_backoff
+        for attempt in range(max_retries + 1):
+            try:
+                GEMINI_RATE_LIMITER.acquire()
+                response = get_client().models.generate_content(
+                    model=candidate,
+                    contents=prompt,
+                    config=cfg,
+                )
+                if model is None:
+                    _remember_model(candidate)
+                return response.text or ""
+            except Exception as exc:
+                last_error = exc
+                err_str = str(exc)
+
+                if _is_not_found(err_str):
+                    # Dead model ID — no amount of retrying resurrects it.
+                    log.warning("Gemini model %r unavailable (404/NOT_FOUND).", candidate)
+                    break
+
+                if attempt < max_retries:
+                    log.warning(
+                        "Gemini call to %r failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                        candidate,
+                        attempt + 1,
+                        max_retries + 1,
+                        exc,
+                        backoff,
+                    )
+                    time.sleep(backoff)
+                    backoff *= 2.0
+                    continue
+
+                if _is_rate_limited(err_str):
+                    # Quota is per-model on the free tier, so a sibling model may
+                    # still have headroom. Worth trying the next candidate.
+                    log.warning(
+                        "Gemini model %r is rate limited/quota exhausted after %d attempts. "
+                        "Trying next fallback model.",
+                        candidate,
+                        max_retries + 1,
+                    )
+                    break
+
+                log.warning(
+                    "Gemini call to %r failed after %d attempts: %s.",
+                    candidate,
+                    max_retries + 1,
+                    exc,
+                )
+                break
+
+    if _is_not_found(str(last_error or "")):
+        # Every candidate 404'd, which almost always means the key is scoped to a
+        # different model family. Show what it can actually reach so the fix is
+        # a one-line .env edit rather than a guessing game.
+        try:
+            available = list_available_models()
+            log.error(
+                "No configured Gemini model is available to this API key. "
+                "Models this key CAN call: %s. Set GEMINI_MODEL in .env to one of these.",
+                ", ".join(available) or "(none returned)",
+            )
+        except Exception as list_exc:
+            log.warning("Could not list available Gemini models: %s", list_exc)
+
+    log.warning(
+        "All Gemini candidates exhausted (%s). Falling back to mock generator — "
+        "agent output is NOT live reasoning.",
+        ", ".join(candidates),
+    )
+    return _generate_mock_fallback(
+        prompt, system_instruction, response_mime_type, response_schema
+    )
 
 
 

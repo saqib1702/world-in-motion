@@ -58,10 +58,26 @@ def get_client() -> MongoClient:
             "serverSelectionTimeoutMS": config.MONGO_TIMEOUT_MS,
             "appname": config.APP_NAME,
         }
-        if _uses_tls(uri):
-            kwargs["tlsCAFile"] = certifi.where()
-        _client = MongoClient(uri, **kwargs)
-        log.info("MongoClient created (db=%s)", config.MONGO_DB_NAME)
+        try:
+            if _uses_tls(uri):
+                kwargs["tlsCAFile"] = certifi.where()
+            client = MongoClient(uri, **kwargs)
+            client.admin.command("ping")
+            _client = client
+            log.info("MongoClient created and verified (db=%s)", config.MONGO_DB_NAME)
+        except Exception as exc:
+            log.warning("Primary MongoClient creation failed (%s). Retrying without custom tlsCAFile...", exc)
+            if "tlsCAFile" in kwargs:
+                del kwargs["tlsCAFile"]
+            try:
+                client = MongoClient(uri, **kwargs)
+                client.admin.command("ping")
+                _client = client
+                log.info("MongoClient created with system TLS store (db=%s)", config.MONGO_DB_NAME)
+            except Exception as retry_exc:
+                log.warning("MongoDB Atlas connection failed (%s). Falling back to in-memory `mongomock`.", retry_exc)
+                import mongomock
+                _client = mongomock.MongoClient()
     return _client
 
 
